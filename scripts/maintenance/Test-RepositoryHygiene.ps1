@@ -33,7 +33,7 @@ $maximumSourceFileBytes = 10MB
 foreach ($candidate in $candidateFiles) {
     $relative = $candidate.Replace('\', '/')
     $absolute = Join-Path $repository $candidate
-    if (-not (Test-Path -LiteralPath $absolute -PathType Leaf)) {
+    if (-not [System.IO.File]::Exists($absolute)) {
         continue
     }
 
@@ -58,7 +58,12 @@ foreach ($candidate in $candidateFiles) {
         $violations.Add("binary, runtime data, or private-key file is a Git candidate: $relative")
     }
 
-    $file = Get-Item -LiteralPath $absolute
+    # PowerShell treats dotfiles as hidden on Linux. Provider cmdlets such as
+    # Get-Item/Get-Content may require -Force there even for an explicit path,
+    # while the same files are ordinary on Windows. System.IO has consistent
+    # behavior on both platforms and prevents CI from failing on .dockerignore,
+    # .gitattributes, and .gitignore.
+    $file = [System.IO.FileInfo]::new($absolute)
     if ($file.Length -gt $maximumSourceFileBytes) {
         $violations.Add("source candidate exceeds 10 MiB: $relative ($($file.Length) bytes)")
     }
@@ -68,7 +73,7 @@ foreach ($candidate in $candidateFiles) {
         continue
     }
 
-    $content = Get-Content -Raw -LiteralPath $absolute
+    $content = [System.IO.File]::ReadAllText($absolute)
     if ($content -match '(?m)[ \t]+$') {
         $violations.Add("trailing whitespace found in: $relative")
     }
@@ -97,10 +102,10 @@ foreach ($candidate in $candidateFiles) {
 $markdownFiles = $candidateFiles | Where-Object { $_ -match '\.md$' }
 foreach ($markdownFile in $markdownFiles) {
     $absolute = Join-Path $repository $markdownFile
-    if (-not (Test-Path -LiteralPath $absolute -PathType Leaf)) {
+    if (-not [System.IO.File]::Exists($absolute)) {
         continue
     }
-    $content = Get-Content -Raw -LiteralPath $absolute
+    $content = [System.IO.File]::ReadAllText($absolute)
     $links = [regex]::Matches($content, '!?(?:\[[^\]]*\])\((?<target>[^)]+)\)')
     foreach ($link in $links) {
         $target = $link.Groups["target"].Value.Trim().Trim('<', '>')
