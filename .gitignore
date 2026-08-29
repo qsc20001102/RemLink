@@ -1,0 +1,60 @@
+# Go build and test outputs
+/bin/
+/build/
+/dist/
+*.exe
+*.test
+*.out
+*.prof
+coverage*.txt
+/coverage/
+*.dll
+!internal/platform/windows/wintunruntime/assets/**/wintun.dll
+
+# Local configuration and runtime state
+/config/*.yaml
+!/config/*.example.yaml
+/.env
+.env
+.env.*
+!.env.example
+!.env.*.example
+/data/
+/deploy/docker/data/
+/runtime/
+**/identity.json
+**/site-profiles.json
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.log
+*.log.*
+*.jsonl
+/logs/
+
+# Local credentials and certificates
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Frontend dependencies and outputs
+node_modules/
+frontend/*/dist/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.vs/
+.fleet/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.tmp
+*~
+/.cache/
+/tmp/
+.codex-qa/
+evidence/

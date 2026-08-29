@@ -1,0 +1,12 @@
+server: "http://1.2.3.4:8080"
+node_name: "Qingdao-Site-01"
+join_token: ""
+
+netstack:
+  tcp_flow_limit: 2048
+  udp_flow_limit: 4096
+  udp_idle_seconds: 60
+
+# Join Token 只用于首次注册；可以从 Server 查询后直接填写在上面。
+# NodeID、NodeToken 和 WireGuard 私钥仍由程序管理并使用 DPAPI 保护。
+# Site LAN CIDR 由 Engineer Session 动态下发。

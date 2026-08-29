@@ -1,0 +1,12 @@
+.table-head,
+.site-row {
+  grid-template-columns: minmax(105px, 1.25fr) minmax(48px, .48fr) minmax(82px, .75fr) minmax(72px, .72fr) minmax(68px, .72fr);
+  column-gap: 8px;
+}
+
+.site-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

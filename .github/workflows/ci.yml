@@ -1,0 +1,89 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Check repository hygiene
+        shell: pwsh
+        run: ./scripts/maintenance/Test-RepositoryHygiene.ps1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+          check-latest: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.14.0
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install pinned frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Type-check and build embedded frontends
+        run: npm run typecheck --prefix frontend && npm run build --prefix frontend
+
+      - name: Reject production Demo fixtures and fallbacks
+        shell: pwsh
+        run: ./scripts/validation/Test-FrontendProduction.ps1
+
+      - name: Enforce architecture constraints
+        shell: pwsh
+        run: ./scripts/validation/Test-Architecture.ps1
+
+      - name: Self-test acceptance evidence tooling
+        shell: pwsh
+        run: ./scripts/validation/Test-AcceptanceTools.ps1
+
+      - name: Verify module files are tidy
+        run: go mod tidy
+
+      - name: Check module-file diff
+        run: git diff --exit-code -- go.mod go.sum
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test -count=1 ./...
+
+      - name: Race-check concurrent data/control paths
+        if: runner.os == 'Linux'
+        run: go test -race ./internal/control ./internal/session ./internal/subnet ./internal/overlay/clientwg
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build Server container baseline
+        if: runner.os == 'Linux'
+        run: docker build --build-arg REMLINK_COMMIT=${{ github.sha }} -f deploy/docker/Dockerfile -t remlink/server:ci .
+
+      - name: Validate Compose deployment mapping
+        if: runner.os == 'Linux'
+        env:
+          REMLINK_WG_ENDPOINT: 203.0.113.10:51820
+          REMLINK_WG_PORT: 51820
+        run: docker compose -f deploy/docker/compose.yaml config --quiet

@@ -1,0 +1,14 @@
+server:
+  http_listen: "0.0.0.0:8080"
+  control_listen: "10.88.0.1:7001"
+  wireguard_port: 51820
+
+data:
+  directory: "./data"
+
+network:
+  overlay_cidr: "10.88.0.0/16"
+  server_overlay_ip: "10.88.0.1"
+  session_udp_port: 6200
+  mtu: 1280
+

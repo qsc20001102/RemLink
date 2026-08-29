@@ -1,0 +1,8 @@
+server: "http://1.2.3.4:8080"
+node_name: "Engineer-QSC"
+join_token: ""
+
+# Join Token 只用于首次注册；可以从 Server 查询后直接填写在上面。
+# NodeID、NodeToken 和 WireGuard 私钥仍由程序管理并使用 DPAPI 保护。
+# 远程 CIDR 在界面中按 Site 分别保存到 EXE 旁的 site-profiles.json，
+# 不写入本 YAML，也不包含 Node Token、WireGuard 私钥等敏感数据。

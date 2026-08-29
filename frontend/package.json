@@ -1,0 +1,23 @@
+{
+  "name": "remlink-frontends",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "npm run build:engineer && npm run build:server",
+    "build:engineer": "vite build --config engineer/vite.config.ts",
+    "build:server": "vite build --config server/vite.config.ts",
+    "dev:engineer": "vite --config engineer/vite.config.ts",
+    "dev:server": "vite --config server/vite.config.ts",
+    "typecheck": "vue-tsc --noEmit -p engineer/tsconfig.json && vue-tsc --noEmit -p server/tsconfig.json"
+  },
+  "dependencies": {
+    "vue": "3.5.41"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "6.0.8",
+    "typescript": "5.9.3",
+    "vite": "8.2.2",
+    "vue-tsc": "3.3.11"
+  }
+}
