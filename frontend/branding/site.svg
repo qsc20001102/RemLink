@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+  <title id="title">RemLink Site</title>
+  <defs>
+    <linearGradient id="bg" x1="18" y1="15" x2="239" y2="240" gradientUnits="userSpaceOnUse"><stop stop-color="#5259BC"/><stop offset="1" stop-color="#253468"/></linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="url(#bg)"/>
+  <path d="M47 189V112l45 24v-24l45 24V94l72 35v60H47Z" fill="#254883" stroke="#C7D7FF" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M47 189h162" stroke="#C7D7FF" stroke-width="8" stroke-linecap="round"/>
+  <path d="M69 162h14m27 0h14m27 0h14" stroke="#78DBFF" stroke-width="10" stroke-linecap="round"/>
+  <path d="M172 107V67" stroke="#C7D7FF" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="172" cy="61" r="8" fill="#88E8FF"/>
+  <path d="M150 52c12-12 32-12 44 0M138 39c20-21 48-21 68 0" fill="none" stroke="#87DEFF" stroke-width="7" stroke-linecap="round"/>
+</svg>

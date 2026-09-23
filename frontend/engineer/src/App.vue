@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Icon from './Icon.vue'
+import engineerMark from '../../branding/engineer.svg'
+import siteMark from '../../branding/site.svg'
 import { checkCIDRs, createSession, disconnectSession, getState, saveSiteCIDRs } from './api'
 import type { EngineerState, SiteSummary } from './types'
 import { errorLabel, levelLabel, statusLabel } from './zh-cn'
@@ -104,7 +106,7 @@ watch(selectedSiteID, () => { void loadSelectedSiteProfile() })
 <template>
   <div class="app-shell" v-if="state">
     <aside class="sidebar">
-      <div class="brand">RemLink<span>Engineer</span></div>
+      <div class="brand"><img class="app-mark" :src="engineerMark" alt="" />RemLink<span>Engineer</span></div>
       <nav aria-label="主导航">
         <button class="nav-item" :class="{selected:page==='connection'}" @click="page='connection'"><Icon name="link"/>连接</button>
         <button class="nav-item" :class="{selected:page==='session'}" @click="page='session'"><Icon name="session"/>会话</button>
@@ -123,9 +125,9 @@ watch(selectedSiteID, () => { void loadSelectedSiteProfile() })
 
       <div class="workspace">
         <section v-show="page==='connection'" class="connection-path" aria-label="当前连接路径">
-          <div class="endpoint"><span class="endpoint-icon"><Icon name="monitor"/></span><div><b>Engineer</b><small>{{ state.overlayIP }}</small></div></div>
+          <div class="endpoint"><span class="endpoint-icon"><img :src="engineerMark" alt="" /></span><div><b>Engineer</b><small>{{ state.overlayIP }}</small></div></div>
           <div class="path-line"><span></span><i></i><i></i><i></i><span></span></div>
-          <div class="endpoint site"><span class="endpoint-icon"><Icon name="server"/></span><div><b>{{ selectedSite?.name || '选择现场' }}</b><small>{{ selectedSite?.overlay_ip || '—' }}</small></div></div>
+          <div class="endpoint site"><span class="endpoint-icon"><img :src="siteMark" alt="" /></span><div><b>{{ selectedSite?.name || '选择现场' }}</b><small>{{ selectedSite?.overlay_ip || '—' }}</small></div></div>
         </section>
 
         <div v-show="page==='connection'" class="setup-grid">

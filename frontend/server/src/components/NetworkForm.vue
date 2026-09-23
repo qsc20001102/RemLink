@@ -12,8 +12,8 @@ const form = computed(() => props.modelValue)
     <div class="health-list"><span>Overlay 网络 <b><i class="online"></i>健康</b></span><span>节点连通性 <b><i class="online"></i>正常</b></span><span>会话状态 <b><i class="online"></i>正常</b></span></div>
     <div class="fields"><label>Overlay CIDR<input v-model="form.overlay_cidr" /></label><label>Server Overlay IP<input v-model="form.server_overlay_ip" /></label><label>WireGuard Port<input v-model.number="form.wireguard_port" type="number" /></label><label>Session UDP Port<input v-model.number="form.session_udp_port" type="number" /></label><label>MTU<input v-model.number="form.mtu" type="number" /></label></div>
     <button class="primary save" :disabled="busy" @click="$emit('save')">{{ saved ? '已保存' : '保存网络配置' }}</button>
+    <div v-if="full" class="join-token-result"><strong>当前 Join Token</strong><input :value="form.join_token || '读取中…'" readonly aria-label="当前 Join Token" /><small>仅用于新设备首次注册；普通保存和部署不会轮换。</small></div>
     <button v-if="full" class="secondary-action" :disabled="busy" @click="$emit('rotate')">轮换 Join Token</button>
-    <div v-if="full && form.join_token" class="join-token-result"><strong>新 Join Token（仅本次显示）</strong><input :value="form.join_token" readonly aria-label="新 Join Token" /></div>
     <p class="form-note">Overlay 变更将关闭现有会话并要求在线节点重新 Bootstrap。</p>
   </section>
 </template>

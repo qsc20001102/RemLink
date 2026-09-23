@@ -1,4 +1,4 @@
-import type { EventRecord, LogFilter, NetworkConfig, NodeRecord, SessionRecord } from './types'
+import type { EventRecord, LogFilter, NetworkConfig, NodeRecord, SessionFilter, SessionRecord } from './types'
 
 const now = Date.now()
 const demoNodes: NodeRecord[] = [
@@ -10,8 +10,9 @@ const demoNodes: NodeRecord[] = [
 const demoSessions: SessionRecord[] = [
   { session_id: '8648912340291133', engineer_node_id: 'eng-01', site_node_id: 'site-a', status: 'ACTIVE', cidrs: ['192.168.10.0/24'], created_at: new Date(now - 1_220_000).toISOString(), active_at: new Date(now - 1_200_000).toISOString(), counters: { upload_bytes: 1258291, download_bytes: 3586129, upload_packets: 8912, download_packets: 14022 } },
   { session_id: '7066248371127201', engineer_node_id: 'eng-02', site_node_id: 'site-a', status: 'ACTIVE', cidrs: ['192.168.20.0/24'], created_at: new Date(now - 550_000).toISOString(), active_at: new Date(now - 530_000).toISOString(), counters: { upload_bytes: 712004, download_bytes: 1153434, upload_packets: 4220, download_packets: 6741 } },
+  { session_id: '6194730274181054', engineer_node_id: 'eng-01', site_node_id: 'site-b', status: 'CLOSED', cidrs: ['192.168.30.0/24'], created_at: new Date(now - 7_200_000).toISOString(), active_at: new Date(now - 7_180_000).toISOString(), closed_at: new Date(now - 5_400_000).toISOString(), counters: { upload_bytes: 2430410, download_bytes: 8617031, upload_packets: 5010, download_packets: 9332 } },
 ]
-let demoNetwork: NetworkConfig = { overlay_cidr: '10.88.0.0/16', server_overlay_ip: '10.88.0.1', wireguard_port: 51820, session_udp_port: 6200, mtu: 1280, config_version: 1, uptime_seconds: 48376 }
+let demoNetwork: NetworkConfig = { overlay_cidr: '10.88.0.0/16', server_overlay_ip: '10.88.0.1', wireguard_port: 51820, session_udp_port: 6200, mtu: 1280, config_version: 1, uptime_seconds: 48376, join_token: 'demo-current-join-token' }
 const demoEvents: EventRecord[] = [
   { id: 5, time: new Date(now - 5000).toISOString(), level: 'INFO', module: 'CONTROL', node_id: 'eng-01', message: '节点上线，Overlay 10.88.0.10', fields: {} },
   // Keep two legacy English records in development so the presentation-layer
@@ -36,7 +37,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 export const api = {
   nodes: () => dev ? Promise.resolve(structuredClone(demoNodes)) : request<NodeRecord[]>('/api/v1/admin/nodes'),
-  sessions: () => dev ? Promise.resolve(structuredClone(demoSessions)) : request<SessionRecord[]>('/api/v1/admin/sessions'),
+  sessions: (filter: SessionFilter = {}) => {
+    const params = new URLSearchParams()
+    for (const key of ['kind','session_id','engineer_node_id','site_node_id','status','from','to','limit'] as const) if (filter[key]) params.set(key, String(filter[key]))
+    if (!dev) return request<SessionRecord[]>(`/api/v1/admin/sessions?${params}`)
+    const from = filter.from ? Date.parse(filter.from) : Number.NEGATIVE_INFINITY
+    const to = filter.to ? Date.parse(filter.to) : Number.POSITIVE_INFINITY
+    return Promise.resolve(structuredClone(demoSessions.filter(session => {
+      const history = session.status === 'CLOSED' || session.status === 'FAILED'
+      const time = Date.parse(history ? session.closed_at || session.created_at : session.created_at)
+      return (!filter.kind || (filter.kind === 'history' ? history : !history)) &&
+        (!filter.session_id || session.session_id === filter.session_id) &&
+        (!filter.engineer_node_id || session.engineer_node_id === filter.engineer_node_id) &&
+        (!filter.site_node_id || session.site_node_id === filter.site_node_id) &&
+        (!filter.status || session.status === filter.status) && time >= from && time <= to
+    }).slice(0, filter.limit ?? 1000)))
+  },
   network: () => dev ? Promise.resolve(structuredClone(demoNetwork)) : request<NetworkConfig>('/api/v1/admin/network'),
   logs: (filter: LogFilter = {}) => {
     const params = new URLSearchParams({ limit: String(filter.limit ?? 200) })
@@ -52,7 +68,7 @@ export const api = {
   updateNetwork: async (network: NetworkConfig) => {
     if (dev) {
       const { rotate_join_token: rotate, join_token: _, ...input } = network
-      demoNetwork = { ...input, config_version: network.config_version + 1, ...(rotate ? { join_token: 'demo-join-token-after-rotation' } : {}) }
+      demoNetwork = { ...input, config_version: network.config_version + 1, join_token: rotate ? 'demo-join-token-after-rotation' : demoNetwork.join_token }
       return structuredClone(demoNetwork)
     }
     const { config_version: _, uptime_seconds: __, join_token: ___, ...input } = network

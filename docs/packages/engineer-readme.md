@@ -16,6 +16,7 @@
 
 ## 本目录中的运行文件
 
+- `RemLinkEngineer.svg`、`RemLinkEngineer.ico`：Engineer 专属图标；ICO 已嵌入 EXE，也可用于快捷方式。
 - `identity.json`：NodeID、Node Token 和 WireGuard 私钥等 DPAPI 保护身份，仅可在生成它的 Windows 主机解密。
 - `site-profiles.json`：由界面自动生成，按 Site NodeID 保存各现场的 Remote CIDR；不包含密钥或 Token。切换现场时会自动加载对应网段。
 - `logs\engineer.jsonl`：Engineer 日志。

@@ -19,6 +19,13 @@ import (
 
 type fakeJoinTokenRotator struct{ count int }
 
+func (f *fakeJoinTokenRotator) Ensure(context.Context) (string, error) {
+	if f.count > 0 {
+		return "rotated-token", nil
+	}
+	return "current-token", nil
+}
+
 func (f *fakeJoinTokenRotator) Rotate(context.Context) (string, error) {
 	f.count++
 	return "rotated-token", nil
@@ -117,6 +124,21 @@ func TestAdminHandlerAuthNodeUpdateLogsAndRotateOnly(t *testing.T) {
 		t.Fatalf("unknown JSON field status = %d, want 400", bad.Code)
 	}
 
+	initialNetwork := adminRequest(t, handler, http.MethodGet, "/api/v1/admin/network", nil)
+	var initialNetworkBody map[string]any
+	_ = json.Unmarshal(initialNetwork.Body.Bytes(), &initialNetworkBody)
+	if initialNetwork.Code != http.StatusOK || initialNetworkBody["join_token"] != "current-token" || rotator.count != 0 {
+		t.Fatalf("reading network changed Join Token: status=%d body=%s rotations=%d", initialNetwork.Code, initialNetwork.Body.String(), rotator.count)
+	}
+	invalidSessionTime := adminRequest(t, handler, http.MethodGet, "/api/v1/admin/sessions?kind=history&from=not-a-time", nil)
+	if invalidSessionTime.Code != http.StatusBadRequest {
+		t.Fatalf("invalid Session time status = %d", invalidSessionTime.Code)
+	}
+	invalidSessionKind := adminRequest(t, handler, http.MethodGet, "/api/v1/admin/sessions?kind=unknown", nil)
+	if invalidSessionKind.Code != http.StatusBadRequest {
+		t.Fatalf("invalid Session kind status = %d", invalidSessionKind.Code)
+	}
+
 	rotate := adminRequest(t, handler, http.MethodPut, "/api/v1/admin/network", map[string]any{
 		"overlay_cidr": "10.88.0.0/24", "server_overlay_ip": "10.88.0.1",
 		"wireguard_port": 51820, "session_udp_port": 6200, "mtu": 1280, "rotate_join_token": true,
@@ -150,6 +172,9 @@ func TestAdminHandlerAuthNodeUpdateLogsAndRotateOnly(t *testing.T) {
 	_ = json.Unmarshal(view.Body.Bytes(), &networkView)
 	if _, exists := networkView["uptime_seconds"]; !exists {
 		t.Fatalf("network response has no uptime_seconds: %s", view.Body.String())
+	}
+	if networkView["join_token"] != "rotated-token" || rotator.count != 1 {
+		t.Fatalf("reading network rotated Join Token or changed it: %s", view.Body.String())
 	}
 
 	deleted := adminRequest(t, handler, http.MethodDelete, "/api/v1/admin/nodes/engineer", nil)

@@ -263,6 +263,18 @@ func TestSessionRepositoryLifecycleAndStartupClose(t *testing.T) {
 	if err != nil || got.Status != model.SessionClosed || got.ClosedAt == nil {
 		t.Fatalf("Session after startup close = %+v, %v", got, err)
 	}
+	recent, err := store.ListSessionsFiltered(ctx, SessionFilter{Kind: "history", From: time.Now().Add(-time.Hour), Limit: 10})
+	if err != nil || len(recent) != 1 || recent[0].ID != session.ID {
+		t.Fatalf("recent history = %+v, %v", recent, err)
+	}
+	old, err := store.ListSessionsFiltered(ctx, SessionFilter{Kind: "history", To: time.Now().Add(-time.Hour)})
+	if err != nil || len(old) != 0 {
+		t.Fatalf("old history = %+v, %v", old, err)
+	}
+	live, err := store.ListSessionsFiltered(ctx, SessionFilter{Kind: "live"})
+	if err != nil || len(live) != 0 {
+		t.Fatalf("live sessions after close = %+v, %v", live, err)
+	}
 }
 
 func createSessionTestNodes(t *testing.T, store *Store) {

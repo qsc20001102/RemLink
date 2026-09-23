@@ -18,7 +18,7 @@ Phase 0–10 的实现工作均已进入代码。`specs/tasks.md` 明确区分�
 - Site 和 Server 信任边界都拒绝 `DEFAULT_ONLY`。数据包注入失败只关闭受影响 Session 并报告 `SESSION_INJECT_FAILED`，节点监听仍可用。
 - 被拒 Session 数据报和 PacketMux 丢包只输出元数据、限速安全警告；默认不记录高频数据包 DEBUG，也没有接收载荷字节的日志 API。
 - PacketMux 在拦截/注入边界计数；UDP relay 空闲回收、Sender 关闭与 netstack 重试路径有 race/幂等覆盖。
-- Wails Engineer GUI 和内嵌 Vue Server Web UI 已实现；Server 五个管理页及指定 API 完整。节点显示 WG 握手，Session 显示持续时间，日志支持五维过滤，Token 轮换只显示一次，Engineer 显示 Site capability 与 LastSeen。
+- Wails Engineer GUI 和内嵌 Vue Server Web UI 已实现；Server 五个管理页及指定 API 完整。节点显示 WG 握手，Session 显示持续时间，日志支持五维过滤，网络页可持续查看当前 Join Token，Engineer 显示 Site capability 与 LastSeen。
 - 浏览器侧 SessionID 使用十进制字符串，避免 JavaScript 舍入随机 `uint64`。新的 Node Bootstrap 会关闭 Server 侧本地运行时已经丢失的 Session；短 Control 重连保留运行时。
 - Engineer GUI 对所有非终态单 Session 状态做操作门禁；生产启动和输入默认失败关闭；Server 运行表刷新不会覆盖正在编辑的网络配置。
 - 多 Engineer、多 Site 并发与重复 CIDR flow 隔离已实现。

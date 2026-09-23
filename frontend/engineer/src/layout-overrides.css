@@ -10,3 +10,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.brand { position: relative; padding-left: 67px; }
+.brand .app-mark { position: absolute; left: 20px; top: 20px; width: 36px; height: 36px; border-radius: 9px; box-shadow: 0 5px 13px #1d56a52c; }
+.endpoint-icon { width: 48px; height: 48px; border: 0; background: transparent; }
+.endpoint-icon img { width: 44px; height: 44px; border-radius: 10px; box-shadow: 0 4px 12px #244e9223; }
+@media (max-width: 1120px) { .brand { padding: 0; } .brand .app-mark { left: 22px; top: 19px; } }

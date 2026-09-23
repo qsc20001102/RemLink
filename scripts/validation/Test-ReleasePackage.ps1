@@ -62,10 +62,10 @@ try {
     )
     switch ($Role) {
         Engineer {
-            $required += @("RemLinkEngineer.exe", "engineer.yaml", "THIRD_PARTY_NOTICES.md")
+            $required += @("RemLinkEngineer.exe", "RemLinkEngineer.svg", "RemLinkEngineer.ico", "engineer.yaml", "THIRD_PARTY_NOTICES.md")
         }
         Site {
-            $required += @("RemLinkSite.exe", "site.yaml", "THIRD_PARTY_NOTICES.md")
+            $required += @("RemLinkSite.exe", "RemLinkSite.svg", "RemLinkSite.ico", "site.yaml", "THIRD_PARTY_NOTICES.md")
         }
         Server {
             $required += @(

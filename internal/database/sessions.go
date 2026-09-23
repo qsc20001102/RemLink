@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/netip"
 	"strconv"
+	"strings"
 	"time"
 
 	"remlink/internal/model"
@@ -119,9 +120,68 @@ func (s *Store) GetSession(ctx context.Context, sessionID uint64) (model.Session
 	return session, rows.Err()
 }
 
-// ListSessions returns complete Sessions newest first for the Admin API.
+// SessionFilter limits Admin session queries without loading the full history.
+type SessionFilter struct {
+	Kind           string
+	SessionID      string
+	EngineerNodeID string
+	SiteNodeID     string
+	Status         string
+	From           time.Time
+	To             time.Time
+	Limit          int
+}
+
+// ListSessions returns complete Sessions newest first for callers that need all records.
 func (s *Store) ListSessions(ctx context.Context) ([]model.Session, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT session_id FROM sessions ORDER BY created_at DESC, session_id DESC`)
+	return s.ListSessionsFiltered(ctx, SessionFilter{})
+}
+
+// ListSessionsFiltered applies optional filters before loading Session details.
+func (s *Store) ListSessionsFiltered(ctx context.Context, filter SessionFilter) ([]model.Session, error) {
+	var query strings.Builder
+	query.WriteString(`SELECT session_id FROM sessions WHERE 1=1`)
+	args := make([]any, 0, 8)
+	switch filter.Kind {
+	case "live":
+		query.WriteString(` AND status NOT IN ('CLOSED','FAILED')`)
+	case "history":
+		query.WriteString(` AND status IN ('CLOSED','FAILED')`)
+	}
+	if filter.SessionID != "" {
+		query.WriteString(` AND session_id = ?`)
+		args = append(args, filter.SessionID)
+	}
+	if filter.EngineerNodeID != "" {
+		query.WriteString(` AND engineer_node_id = ?`)
+		args = append(args, filter.EngineerNodeID)
+	}
+	if filter.SiteNodeID != "" {
+		query.WriteString(` AND site_node_id = ?`)
+		args = append(args, filter.SiteNodeID)
+	}
+	if filter.Status != "" {
+		query.WriteString(` AND status = ?`)
+		args = append(args, filter.Status)
+	}
+	if !filter.From.IsZero() {
+		query.WriteString(` AND julianday(COALESCE(closed_at, created_at)) >= julianday(?)`)
+		args = append(args, formatTime(filter.From))
+	}
+	if !filter.To.IsZero() {
+		query.WriteString(` AND julianday(COALESCE(closed_at, created_at)) <= julianday(?)`)
+		args = append(args, formatTime(filter.To))
+	}
+	if filter.Kind == "history" {
+		query.WriteString(` ORDER BY julianday(COALESCE(closed_at, created_at)) DESC, session_id DESC`)
+	} else {
+		query.WriteString(` ORDER BY created_at DESC, session_id DESC`)
+	}
+	if filter.Limit > 0 {
+		query.WriteString(` LIMIT ?`)
+		args = append(args, filter.Limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query.String(), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list Session IDs: %w", err)
 	}

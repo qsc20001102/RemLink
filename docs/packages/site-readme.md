@@ -16,6 +16,7 @@
 
 ## 本目录中的运行文件
 
+- `RemLinkSite.svg`、`RemLinkSite.ico`：Site 专属图标；ICO 已嵌入 EXE，也可用于快捷方式。
 - `identity.json`：NodeID、Node Token 和 WireGuard 私钥等 DPAPI 保护身份，仅可在生成它的 Windows 主机解密。
 - `logs\site.jsonl`：Site 日志。
 - `wintun.dll`：EXE 内嵌的固定版本 Wintun 首次运行释放文件，程序会校验 SHA-256。

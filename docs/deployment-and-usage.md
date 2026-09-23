@@ -189,7 +189,7 @@ Token 在轮换前可登记多个节点，不是每使用一次自动失效。�
 sudo docker compose --env-file .env -f compose.release.yaml exec server remlink-server -config /etc/remlink/server.yaml -rotate-join-token
 ~~~
 
-也可在管理页面“网络”页轮换；新值仅在本次响应中显示。
+也可在管理页面“网络”页查看当前 Join Token 或主动轮换；网络页刷新后仍可查看当前值。普通部署与保存网络配置不会轮换 Join Token。已注册节点使用各自的 Node Token，轮换 Join Token 仅使旧值无法用于新的首次注册。
 
 ### 4.4 可选：原生 Linux 服务
 

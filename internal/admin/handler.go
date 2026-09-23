@@ -21,7 +21,8 @@ import (
 
 const maxAdminBody = 1 << 20
 
-type JoinTokenRotator interface {
+type JoinTokenManager interface {
+	Ensure(context.Context) (string, error)
 	Rotate(context.Context) (string, error)
 }
 
@@ -32,7 +33,7 @@ type HandlerConfig struct {
 	Control    ControlNetwork
 	Sessions   SessionControl
 	Network    *NetworkManager
-	JoinTokens JoinTokenRotator
+	JoinTokens JoinTokenManager
 	AdminToken string
 }
 
@@ -166,7 +167,56 @@ func Handler(config HandlerConfig) (http.Handler, error) {
 		writer.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET /api/v1/admin/sessions", func(writer http.ResponseWriter, request *http.Request) {
-		sessions, err := config.Store.ListSessions(request.Context())
+		query := request.URL.Query()
+		filter := database.SessionFilter{
+			Kind: query.Get("kind"), SessionID: query.Get("session_id"),
+			EngineerNodeID: query.Get("engineer_node_id"), SiteNodeID: query.Get("site_node_id"),
+			Status: query.Get("status"),
+		}
+		if filter.Kind != "" && filter.Kind != "live" && filter.Kind != "history" {
+			writeAdminError(writer, http.StatusBadRequest, "INVALID_SESSION_FILTER", errors.New("kind must be live or history"))
+			return
+		}
+		if filter.SessionID != "" {
+			id, parseErr := strconv.ParseUint(filter.SessionID, 10, 64)
+			if parseErr != nil || id == 0 {
+				writeAdminError(writer, http.StatusBadRequest, "INVALID_SESSION_ID", errors.New("session_id must be uint64"))
+				return
+			}
+		}
+		if filter.Status != "" {
+			if _, parseErr := model.ParseSessionStatus(filter.Status); parseErr != nil {
+				writeAdminError(writer, http.StatusBadRequest, "INVALID_SESSION_FILTER", parseErr)
+				return
+			}
+		}
+		var parseErr error
+		if raw := query.Get("from"); raw != "" {
+			filter.From, parseErr = time.Parse(time.RFC3339, raw)
+			if parseErr != nil {
+				writeAdminError(writer, http.StatusBadRequest, "INVALID_SESSION_FILTER", errors.New("from must be RFC3339"))
+				return
+			}
+		}
+		if raw := query.Get("to"); raw != "" {
+			filter.To, parseErr = time.Parse(time.RFC3339, raw)
+			if parseErr != nil {
+				writeAdminError(writer, http.StatusBadRequest, "INVALID_SESSION_FILTER", errors.New("to must be RFC3339"))
+				return
+			}
+		}
+		if !filter.From.IsZero() && !filter.To.IsZero() && filter.From.After(filter.To) {
+			writeAdminError(writer, http.StatusBadRequest, "INVALID_SESSION_FILTER", errors.New("from must not exceed to"))
+			return
+		}
+		if raw := query.Get("limit"); raw != "" {
+			filter.Limit, parseErr = strconv.Atoi(raw)
+			if parseErr != nil || filter.Limit < 1 || filter.Limit > 1000 {
+				writeAdminError(writer, http.StatusBadRequest, "INVALID_SESSION_FILTER", errors.New("limit must be 1..1000"))
+				return
+			}
+		}
+		sessions, err := config.Store.ListSessionsFiltered(request.Context(), filter)
 		writeResult(writer, sessions, err)
 	})
 	mux.HandleFunc("POST /api/v1/admin/sessions/{id}/disconnect", func(writer http.ResponseWriter, request *http.Request) {
@@ -182,10 +232,20 @@ func Handler(config HandlerConfig) (http.Handler, error) {
 		recordAdminEvent(request.Context(), config.Store, "", id, "管理员已强制断开会话", nil)
 		writeAdminJSON(writer, http.StatusOK, map[string]any{"session_id": id, "status": model.SessionClosed})
 	})
-	mux.HandleFunc("GET /api/v1/admin/network", func(writer http.ResponseWriter, _ *http.Request) {
-		writeAdminJSON(writer, http.StatusOK, config.Network.View())
+	mux.HandleFunc("GET /api/v1/admin/network", func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Cache-Control", "no-store")
+		token, err := config.JoinTokens.Ensure(request.Context())
+		if err != nil {
+			writeAdminError(writer, http.StatusInternalServerError, "JOIN_TOKEN_READ_FAILED", err)
+			return
+		}
+		writeAdminJSON(writer, http.StatusOK, struct {
+			NetworkView
+			JoinToken string `json:"join_token"`
+		}{NetworkView: config.Network.View(), JoinToken: token})
 	})
 	mux.HandleFunc("PUT /api/v1/admin/network", func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Cache-Control", "no-store")
 		var input NetworkUpdate
 		if err := decodeAdminJSON(writer, request, &input); err != nil {
 			writeAdminError(writer, http.StatusBadRequest, "INVALID_REQUEST", err)
@@ -209,6 +269,12 @@ func Handler(config HandlerConfig) (http.Handler, error) {
 			response.JoinToken, err = config.JoinTokens.Rotate(request.Context())
 			if err != nil {
 				writeAdminError(writer, http.StatusInternalServerError, "JOIN_TOKEN_ROTATE_FAILED", err)
+				return
+			}
+		} else {
+			response.JoinToken, err = config.JoinTokens.Ensure(request.Context())
+			if err != nil {
+				writeAdminError(writer, http.StatusInternalServerError, "JOIN_TOKEN_READ_FAILED", err)
 				return
 			}
 		}

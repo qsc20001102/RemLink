@@ -25,6 +25,13 @@ try { $commit = (git -C $repository rev-parse --short HEAD 2>$null).Trim() } cat
 if (-not $commit) { $commit = "unknown" }
 $linkerFlags = "-s -w -X remlink/internal/version.Version=$Version -X remlink/internal/version.Commit=$commit"
 
+function Assert-NativeSuccess {
+    param([Parameter(Mandatory = $true)][string]$Step)
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Step failed with exit code $LASTEXITCODE"
+    }
+}
+
 function Write-PackageMetadata {
     param(
         [Parameter(Mandatory = $true)][string]$Root,
@@ -94,12 +101,24 @@ Push-Location $repository
 try {
     & (Join-Path $repository "scripts/maintenance/Test-RepositoryHygiene.ps1")
     npm ci --prefix frontend
+    Assert-NativeSuccess "npm ci"
     npm run typecheck --prefix frontend
-    npm run build --prefix frontend
+    Assert-NativeSuccess "frontend typecheck"
+    $savedFrontendVersion = $env:VITE_APP_VERSION
+    try {
+        $env:VITE_APP_VERSION = $Version
+        npm run build --prefix frontend
+        Assert-NativeSuccess "frontend build"
+    } finally {
+        $env:VITE_APP_VERSION = $savedFrontendVersion
+    }
     & (Join-Path $repository "scripts/validation/Test-FrontendProduction.ps1")
     go mod verify
+    Assert-NativeSuccess "go mod verify"
     go test -count=1 ./...
+    Assert-NativeSuccess "go test"
     go vet ./...
+    Assert-NativeSuccess "go vet"
     & (Join-Path $repository "scripts/validation/Test-Architecture.ps1")
     & (Join-Path $repository "scripts/validation/Test-AcceptanceTools.ps1")
 
@@ -114,12 +133,17 @@ try {
         # intentionally compiles app_default_windows.go, which only shows an
         # error dialog instructing the operator to use `wails build`.
         go build -trimpath -tags "desktop,production" -ldflags "$linkerFlags -H windowsgui" -o (Join-Path $engineerRoot "RemLinkEngineer.exe") ./cmd/engineer
+        Assert-NativeSuccess "Engineer build"
         go build -trimpath -ldflags $linkerFlags -o (Join-Path $siteRoot "RemLinkSite.exe") ./cmd/site
+        Assert-NativeSuccess "Site build"
+        & (Join-Path $repository "scripts/branding/Set-ExecutableIcon.ps1") -ExecutablePath (Join-Path $engineerRoot "RemLinkEngineer.exe") -IconPath (Join-Path $repository "frontend/branding/engineer.ico")
+        & (Join-Path $repository "scripts/branding/Set-ExecutableIcon.ps1") -ExecutablePath (Join-Path $siteRoot "RemLinkSite.exe") -IconPath (Join-Path $repository "frontend/branding/site.ico")
 
         $env:GOOS = "linux"
         $env:GOARCH = "amd64"
         $env:CGO_ENABLED = "0"
         go build -trimpath -ldflags $linkerFlags -o (Join-Path $linuxRoot "remlink-server") ./cmd/server
+        Assert-NativeSuccess "Server build"
     } finally {
         $env:GOOS = $savedGOOS
         $env:GOARCH = $savedGOARCH
@@ -129,6 +153,10 @@ try {
     # Engineer and Site are intentionally self-contained portable packages.
     Copy-Item config/engineer.example.yaml (Join-Path $engineerRoot "engineer.yaml")
     Copy-Item config/site.example.yaml (Join-Path $siteRoot "site.yaml")
+    Copy-Item frontend/branding/engineer.svg (Join-Path $engineerRoot "RemLinkEngineer.svg")
+    Copy-Item frontend/branding/engineer.ico (Join-Path $engineerRoot "RemLinkEngineer.ico")
+    Copy-Item frontend/branding/site.svg (Join-Path $siteRoot "RemLinkSite.svg")
+    Copy-Item frontend/branding/site.ico (Join-Path $siteRoot "RemLinkSite.ico")
     Copy-Item THIRD_PARTY_NOTICES.md $engineerRoot
     Copy-Item THIRD_PARTY_NOTICES.md $siteRoot
     Copy-Item docs/packages/engineer-readme.md (Join-Path $engineerRoot "README.md")

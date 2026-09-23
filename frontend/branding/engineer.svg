@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+  <title id="title">RemLink Engineer</title>
+  <defs>
+    <linearGradient id="bg" x1="16" y1="16" x2="240" y2="240" gradientUnits="userSpaceOnUse"><stop stop-color="#2257B1"/><stop offset="1" stop-color="#183467"/></linearGradient>
+    <linearGradient id="screen" x1="72" y1="88" x2="184" y2="158" gradientUnits="userSpaceOnUse"><stop stop-color="#6ED8FF"/><stop offset="1" stop-color="#87A4FF"/></linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="url(#bg)"/>
+  <path d="M50 85c0-8 7-15 15-15h126c8 0 15 7 15 15v91H50V85Z" fill="#14305E" stroke="#A5DCFF" stroke-width="8"/>
+  <rect x="65" y="85" width="126" height="76" rx="5" fill="#1D477F"/>
+  <path d="M82 137c14-16 28-16 42 0s28 16 42 0" fill="none" stroke="url(#screen)" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="82" cy="137" r="8" fill="#83E6FF"/><circle cx="166" cy="137" r="8" fill="#83E6FF"/>
+  <path d="M43 181h170l-14 20H57l-14-20Z" fill="#A7DFFF"/>
+  <path d="M100 189h56" stroke="#265EA3" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="128" cy="114" r="10" fill="#B8F3FF"/>
+</svg>
