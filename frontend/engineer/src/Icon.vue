@@ -1,5 +1,5 @@
 <script setup lang="ts">
-defineProps<{ name: 'link' | 'session' | 'logs' | 'settings' | 'server' | 'monitor' | 'plus' | 'close' | 'check' }>()
+defineProps<{ name: 'link' | 'session' | 'logs' | 'settings' | 'server' | 'monitor' | 'plus' | 'close' | 'check' | 'search' | 'alert' }>()
 </script>
 
 <template>
@@ -13,6 +13,8 @@ defineProps<{ name: 'link' | 'session' | 'logs' | 'settings' | 'server' | 'monit
       <template v-else-if="name === 'monitor'"><rect x="3.5" y="4" width="17" height="12" rx="2"/><path d="M9 20h6M12 16v4"/></template>
       <template v-else-if="name === 'plus'"><path d="M12 5v14M5 12h14"/></template>
       <template v-else-if="name === 'close'"><path d="M6 6l12 12M18 6L6 18"/></template>
+      <template v-else-if="name === 'search'"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></template>
+      <template v-else-if="name === 'alert'"><path d="m12 3 10 18H2zM12 9v5M12 17h.01"/></template>
       <template v-else><path d="M5 12.5l4.2 4.2L19 7"/></template>
     </g>
   </svg>
