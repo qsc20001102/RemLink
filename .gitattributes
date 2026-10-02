@@ -9,6 +9,7 @@
 *.css text eol=lf
 *.html text eol=lf
 *.sh text eol=lf
+*.py text eol=lf
 Dockerfile* text eol=lf
 *.ps1 text eol=crlf
 *.dll binary

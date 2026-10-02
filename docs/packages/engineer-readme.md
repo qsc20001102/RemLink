@@ -22,4 +22,4 @@
 - `logs\engineer.jsonl`：Engineer 日志。
 - `wintun.dll`：EXE 内嵌的固定版本 Wintun 首次运行释放文件，程序会校验 SHA-256。
 
-备份或升级前先退出 Engineer。升级时保留 `engineer.yaml`、`identity.json` 和 `logs`，只替换通过校验的新 EXE；完整三端流程见 `docs\deployment-and-usage.md`。
+备份或升级前先退出 Engineer。升级时保留 `engineer.yaml`、`identity.json`、`site-profiles.json` 和 `logs`，只替换通过校验的新 EXE；完整三端流程见 `docs\deployment-and-usage.md`。

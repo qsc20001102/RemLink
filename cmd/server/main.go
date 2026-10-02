@@ -28,9 +28,6 @@ import (
 	"remlink/internal/version"
 )
 
-const wireGuardEndpointEnvironment = "REMLINK_WG_ENDPOINT"
-const adminTokenEnvironment = "REMLINK_ADMIN_TOKEN"
-
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "remlink-server: %v\n", err)
@@ -42,7 +39,7 @@ func run(arguments []string) error {
 	flags := flag.NewFlagSet("remlink-server", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	configPath := flags.String("config", "config/server.yaml", "Server YAML configuration path")
-	wgEndpoint := flags.String("wg-endpoint", os.Getenv(wireGuardEndpointEnvironment), "public WireGuard host:port (or REMLINK_WG_ENDPOINT)")
+	healthcheck := flags.Bool("healthcheck", false, "check the HTTP listener configured in server.yaml and exit")
 	rotateJoinToken := flags.Bool("rotate-join-token", false, "rotate Join Token in SQLite, print it, and exit")
 	printJoinToken := flags.Bool("print-join-token", false, "print current Join Token and exit")
 	if err := flags.Parse(arguments); err != nil {
@@ -51,6 +48,9 @@ func run(arguments []string) error {
 	serverConfig, err := config.LoadServer(*configPath)
 	if err != nil {
 		return err
+	}
+	if *healthcheck {
+		return checkHealth(serverConfig.Server.HTTPListen)
 	}
 	ctx := context.Background()
 	databasePath := filepath.Join(serverConfig.Data.Directory, "remlink.db")
@@ -96,7 +96,7 @@ func run(arguments []string) error {
 		return err
 	}
 	serverConfig.Server.ControlListen = net.JoinHostPort(storedNetwork.ServerOverlayIP, controlPortText)
-	if err := validateEndpoint(*wgEndpoint, serverConfig.Server.WireGuardPort); err != nil {
+	if err := validateEndpoint(serverConfig.Server.WGEndpoint, serverConfig.Server.WireGuardPort); err != nil {
 		return err
 	}
 
@@ -153,7 +153,7 @@ func run(arguments []string) error {
 	bootstrapLogger.Info("Join Token 已就绪；可使用 Server 命令行查询或轮换", "token_initialized", joinToken != "")
 	service, err := bootstrap.NewService(store, ipamManager, joins, wireGuard, bootstrap.ServiceConfig{
 		ServerID: serverID, Version: version.String(), WGPublicKey: wireGuard.PublicKey(),
-		WGEndpoint: *wgEndpoint, OverlayCIDR: overlayCIDR, ServerOverlayIP: serverIP,
+		WGEndpoint: serverConfig.Server.WGEndpoint, OverlayCIDR: overlayCIDR, ServerOverlayIP: serverIP,
 		ControlURL:     "ws://" + serverConfig.Server.ControlListen + "/control",
 		SessionUDPPort: serverConfig.Network.SessionUDPPort, MTU: serverConfig.Network.MTU,
 		ConfigVersion: storedNetwork.ConfigVersion,
@@ -201,7 +201,7 @@ func run(arguments []string) error {
 	adminHandler, err := admin.Handler(admin.HandlerConfig{
 		Store: store, IPAM: ipamManager, Peers: wireGuard, Control: controlHub,
 		Sessions: sessionManager, Network: networkManager, JoinTokens: joins,
-		AdminToken: os.Getenv(adminTokenEnvironment),
+		AdminToken: serverConfig.Server.AdminToken,
 	})
 	if err != nil {
 		return err
@@ -266,11 +266,32 @@ func run(arguments []string) error {
 func validateEndpoint(endpoint string, listenPort int) error {
 	host, portText, err := net.SplitHostPort(endpoint)
 	if err != nil || host == "" {
-		return fmt.Errorf("--wg-endpoint (or %s) must be a public host:port", wireGuardEndpointEnvironment)
+		return fmt.Errorf("server.wg_endpoint in server.yaml must be a public host:port")
 	}
 	port, err := strconv.Atoi(portText)
 	if err != nil || port != listenPort {
 		return fmt.Errorf("public WireGuard endpoint port must match configured listen port %d", listenPort)
+	}
+	return nil
+}
+
+func checkHealth(listen string) error {
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return err
+	}
+	if host == "0.0.0.0" {
+		host = "127.0.0.1"
+	}
+	client := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{Proxy: nil}}
+	defer client.CloseIdleConnections()
+	response, err := client.Get("http://" + net.JoinHostPort(host, port) + "/api/v1/server/info")
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("healthcheck HTTP status: %d", response.StatusCode)
 	}
 	return nil
 }

@@ -72,12 +72,12 @@ try {
                 "linux-amd64/remlink-server", "linux-amd64/server.yaml", "linux-amd64/THIRD_PARTY_NOTICES.md",
                 "docker/compose.yaml", "docker/Dockerfile", "docker/compose.release.yaml", "docker/Dockerfile.release",
                 "docker/.env.example", "docker/.env.china.example", "docker/preflight.sh", "docker/server.yaml", "docker/README.md",
-                "docs/implementation-status.md",
+                "docker/compose.image.yaml", "docker/README.ugreen.md", "docker/README.1panel.md",
                 "scripts/validation/New-AcceptanceRun.ps1", "scripts/validation/Set-AcceptanceResult.ps1",
                 "scripts/validation/Test-AcceptanceRun.ps1", "scripts/validation/Test-AcceptanceTools.ps1",
                 "scripts/validation/Test-ReleasePackage.ps1", "scripts/validation/Collect-WindowsEvidence.ps1",
                 "scripts/validation/Collect-ServerEvidence.sh", "scripts/validation/Test-RemoteTargets.ps1",
-                "docs/validation/T01-T18-runbook.md", "docs/validation/requirements-evidence.md"
+                "docs/validation/T01-T18-runbook.md", "docs/validation/automated-coverage.md"
             )
         }
     }

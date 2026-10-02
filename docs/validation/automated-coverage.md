@@ -1,33 +1,50 @@
-# 自动化验证覆盖
+# 自动化验证
 
-权威的 R1–R16 与 Phase 0–10 实现/证据矩阵见 `requirements-evidence.md`；本文补充自动化覆盖细节。
+先构建前端，再运行 Go 检查。前端产物通过 `go:embed` 嵌入程序，未构建时 Go 编译可能失败。
 
-自动化测试覆盖协议 framing、精确错误码、Bootstrap/IPAM/数据库、Control 状态、PacketMux、Session UDP 验证、完整 Session 状态机、进程内 gVisor TCP/UDP/ICMP 往返、Admin 网络迁移、rebootstrap 通知和重复 CIDR 隔离。测试还固定 v1 的 `DEFAULT_ONLY` 拒绝、Session 级注入失败清理、拒绝注入后的监听连续性、限速安全警告、WG `/32` peer、唯一 Server client peer、Admin 日志时间过滤和 Site Console 状态/事件字段。
+```powershell
+npm ci --prefix frontend
+npm run typecheck --prefix frontend
+npm run build --prefix frontend
+go mod verify
+go test -count=1 ./...
+go vet ./...
+./scripts/maintenance/Test-RepositoryHygiene.ps1
+./scripts/validation/Test-FrontendProduction.ps1
+./scripts/validation/Test-Architecture.ps1
+./scripts/validation/Test-AcceptanceTools.ps1
+```
 
-回归套件还覆盖：
+## 检查范围
 
-- PREPARE 失败关联、重试和陈旧拒绝隔离；
-- netstack 幂等、PacketMux 计数/队列丢包、严格 IPv4 framing、Sender 关闭 race、UDP 空闲回收；
-- Site flow 上限、Server WG 密钥并发发布、可用 Overlay 主机地址、`/0` 拒绝和事件模块分类；
-- 迁移期间 Session quiesce、迁移后 Session 配置、旧 Control 通知顺序、Overlay 冲突事件、Control rebind 回滚和 Linux 内核变更回滚；
-- 全宽随机 SessionID 的无损十进制 JSON、新 Bootstrap 清理陈旧 Session、严格公网/Overlay endpoint、Site 容量拒绝和 Engineer 单 Session GUI 门禁。
+| 位置 / 工具 | 范围 |
+| --- | --- |
+| `internal/protocol` | Session framing、Control 消息和错误码 |
+| `internal/config`、`internal/database`、`internal/ipam`、`internal/bootstrap` | 配置、迁移、节点登记、Token 与地址分配 |
+| `internal/control`、`internal/session`、`internal/admin` | 心跳、会话状态、超时、统计和网络变更 |
+| `internal/overlay/clientwg`、`internal/subnet` | MuxTun、PacketMux、UDP 封装、双向校验和队列 |
+| `internal/subnetgateway` | gVisor TCP/UDP/ICMP、flow 管理和会话隔离 |
+| Windows 平台、身份及命令入口测试 | 路由、DPAPI、Wintun 运行库和客户端编排；平台专属测试需要对应系统 |
+| `Test-FrontendProduction.ps1` | 生产前端适配器和开发 fixture 泄漏检查 |
+| `Test-Architecture.ps1` | 架构约束、Docker 权限与端口、打包入口和依赖版本策略 |
+| `Test-RepositoryHygiene.ps1` | Git 候选文件、生成物、配置占位值和文档链接 |
+| `Test-AcceptanceTools.ps1` | 验收证据缺失、前置条件及篡改拒绝 |
+| `Test-ReleasePackage.ps1` | 发布包角色隔离、必需文件、元数据和全部文件摘要 |
 
-验收工具自测证明：没有证据文件不能 PASS；Gate 前置条件被执行；证据 SHA-256 与大小会持久化；记录后篡改可被发现。架构扫描还禁止 Server 采集器导出 WireGuard dump/私钥，检查 Docker data mount、可配置 WireGuard 映射、发布 Compose 权限和预编译二进制入口。
+## 发布验证
 
-发布验证器会独立解压 ZIP、检查必需项、重算每条 SHA-256、拒绝未纳入清单的文件，并运行包内验收初始化器，保持全部 Gate/T 为 `NOT_RUN`。
+在 Windows PowerShell 7 中执行：
 
-前端渲染 QA 的开发 fixture 只提供展示数据，实际使用与内嵌构建相同的 Vue 组件。最近一次检查覆盖 Server Nodes/Sessions/Network/Logs 交互以及 Engineer Site capability/LastSeen 和导航；页面有有效 DOM，浏览器无 warning/error。该 UI QA 不声称物理网络操作成功。
+```powershell
+./scripts/build-release.ps1 -Version 1.0.8
+```
 
-以下映射只作为支持证据，不能把真实验收场景标记 PASS：
+脚本执行前端检查、Go test/vet、架构与验收工具检查，再构建 Windows 客户端和 Linux 服务端，生成三个独立 ZIP 并重新解压校验。
 
-| 验收区域 | 自动化证据 | 仍需真实证据 |
-|---|---|---|
-| T03/T05/T13 | `internal/session` manager/runtime 测试 | 管理员 Engineer/Site 与实际路由 |
-| T04/T16 | Windows 路由、冲突、reconcile 测试 | 真实主机前后路由清单 |
-| T07/T08/T09 | gVisor 主机套接字往返 | 两台 Windows 间 PLC/服务 |
-| T10 | 多 CIDR 状态机与 PacketMux | 两个物理现场子网 |
-| T11/T12 | 并发 Session 与重复 CIDR flow key | 四节点载荷隔离 |
-| T15 | SQLite 关闭开放 Session 与 Control 重连 | 流量中 Server 重启 |
-| T17/T18 | Admin 更新/rebootstrap/迁移回滚测试 | 真实适配器和 `wg0` 迁移 |
+Go 检查默认针对当前操作系统；交叉编译不等于运行另一平台的测试。`go test -race` 需要目标平台支持及可用 C 编译器，应在具备条件的环境单独执行。
 
-Gate A–D 和 T01–T18 在执行手册证据齐全前保持 `NOT_RUN`。
+## 实机验收
+
+Linux 内核 WireGuard、管理员 Windows 路由/Wintun、目标服务、重复现场网段和故障恢复，按 [T01–T18 手册](T01-T18-runbook.md) 在真实拓扑中验证。使用 `New-AcceptanceRun.ps1` 初始化结果，`Set-AcceptanceResult.ps1` 记录证据，`Test-AcceptanceRun.ps1` 校验证据路径和摘要。
+
+这份文档描述测试范围与执行方法。通过状态以当次命令输出和验收运行记录为准。

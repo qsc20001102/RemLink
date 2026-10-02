@@ -27,6 +27,19 @@ func TestLoadServerUsesDefaultsAndStrictFields(t *testing.T) {
 	}
 }
 
+func TestServerRuntimeSettingsComeFromYAML(t *testing.T) {
+	t.Setenv("REMLINK_WG_ENDPOINT", "ignored.example:1234")
+	t.Setenv("REMLINK_ADMIN_TOKEN", "ignored-environment-token")
+	path := writeConfig(t, "server:\n  wg_endpoint: vpn.example:51820\n  admin_token: yaml-test-token\n")
+	c, err := LoadServer(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Server.WGEndpoint != "vpn.example:51820" || c.Server.AdminToken != "yaml-test-token" {
+		t.Fatal("YAML settings were not preserved")
+	}
+}
+
 func TestServerConfigValidation(t *testing.T) {
 	t.Parallel()
 	config := DefaultServerConfig()

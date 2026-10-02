@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "1.0.0",
+    [string]$Version = "1.0.8",
     [string]$OutputDirectory = "dist"
 )
 
@@ -170,10 +170,14 @@ try {
     # contains either Windows client executable.
     Copy-Item config/server.example.yaml (Join-Path $linuxRoot "server.yaml")
     Copy-Item THIRD_PARTY_NOTICES.md $linuxRoot
-    Copy-Item README.md $serverRoot
+    Copy-Item docs/packages/server-readme.md (Join-Path $serverRoot "README.md")
     Copy-Item -Recurse -Force deploy/docker (Join-Path $serverRoot "docker")
+    foreach ($composeName in @("compose.release.yaml", "compose.image.yaml")) {
+        $composePath = Join-Path $serverRoot "docker/$composeName"
+        $composeText = [IO.File]::ReadAllText($composePath)
+        [IO.File]::WriteAllText($composePath, ($composeText -replace 'remlink/server:[0-9A-Za-z_.-]+', "remlink/server:$Version"), [Text.UTF8Encoding]::new($false))
+    }
     Copy-Item docs/deployment-and-usage.md (Join-Path $serverRoot "docs/deployment-and-usage.md")
-    Copy-Item docs/implementation-status.md (Join-Path $serverRoot "docs/implementation-status.md")
     Copy-Item scripts/validation/* $validationScriptsRoot
     Copy-Item docs/validation/* $validationDocsRoot
 

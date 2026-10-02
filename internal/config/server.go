@@ -28,6 +28,8 @@ type ServerConfig struct {
 
 // ServerListeners defines process listen endpoints.
 type ServerListeners struct {
+	WGEndpoint    string `yaml:"wg_endpoint"`
+	AdminToken    string `yaml:"admin_token"`
 	HTTPListen    string `yaml:"http_listen"`
 	ControlListen string `yaml:"control_listen"`
 	WireGuardPort int    `yaml:"wireguard_port"`
@@ -76,7 +78,7 @@ func LoadServer(path string) (ServerConfig, error) {
 	return config, nil
 }
 
-// Validate checks Phase 0 invariants without changing the host network.
+// Validate checks Server configuration invariants without changing the host network.
 func (c ServerConfig) Validate() error {
 	if _, err := validateIPv4Listen("server.http_listen", c.Server.HTTPListen); err != nil {
 		return err

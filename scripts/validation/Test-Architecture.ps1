@@ -32,7 +32,7 @@ $serverSources = (Get-Content -Raw (Join-Path $repository 'cmd/server/main.go'))
 if ($serverSources -match 'wireguard/device|internal/overlay/clientwg|NewPacketMux|NewMuxTun') {
     $violations += 'Server data plane imports client wireguard-go or PacketMux code'
 }
-$composePaths = @('deploy/docker/compose.yaml', 'deploy/docker/compose.release.yaml')
+$composePaths = @('deploy/docker/compose.yaml', 'deploy/docker/compose.release.yaml', 'deploy/docker/compose.image.yaml')
 $composes = @{}
 foreach ($composePath in $composePaths) {
     $compose = Get-Content -Raw (Join-Path $repository $composePath)
@@ -43,9 +43,10 @@ foreach ($composePath in $composePaths) {
     if ($compose -match '(?m)^\s*-\s*"?(7001|6200):') { $violations += "$composePath publicly publishes an Overlay-only Control or Session port" }
     if ($compose -match '(?i)MASQUERADE|\bSNAT\b') { $violations += "$composePath configures forbidden Overlay NAT" }
     if ($compose -notmatch '\./data:/app/data') { $violations += "$composePath does not use the required ./data:/app/data persistence mount" }
-    if ($compose -notmatch '\$\{REMLINK_WG_PORT:-51820\}:\$\{REMLINK_WG_PORT:-51820\}/udp') {
-        $violations += "$composePath WireGuard host/container port mapping does not follow REMLINK_WG_PORT"
+    if ($compose -notmatch '51820:51820/udp') {
+        $violations += "$composePath does not publish the default WireGuard UDP port"
     }
+    if ($compose -match 'REMLINK_WG_ENDPOINT|REMLINK_ADMIN_TOKEN') { $violations += "$composePath still supplies application settings outside server.yaml" }
 }
 $compose = $composes['deploy/docker/compose.yaml']
 $dockerServerConfig = Get-Content -Raw (Join-Path $repository 'deploy/docker/server.yaml')

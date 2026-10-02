@@ -7,7 +7,7 @@ services:
         APT_FORCE_IPV4: "${REMLINK_APT_FORCE_IPV4:-1}"
         APT_DEBIAN_MIRROR: "${REMLINK_APT_DEBIAN_MIRROR:-}"
         APT_SECURITY_MIRROR: "${REMLINK_APT_SECURITY_MIRROR:-}"
-    image: remlink/server:1.0.0
+    image: remlink/server:1.0.8
     restart: unless-stopped
     cap_drop:
       - ALL
@@ -20,11 +20,8 @@ services:
     sysctls:
       net.ipv4.ip_forward: "1"
     ports:
-      - "${REMLINK_HTTP_BIND:-0.0.0.0}:8080:8080/tcp"
-      - "${REMLINK_WG_PORT:-51820}:${REMLINK_WG_PORT:-51820}/udp"
-    environment:
-      REMLINK_WG_ENDPOINT: ${REMLINK_WG_ENDPOINT:?set REMLINK_WG_ENDPOINT to the public host and published UDP port}
-      REMLINK_ADMIN_TOKEN: ${REMLINK_ADMIN_TOKEN:-}
+      - "0.0.0.0:8080:8080/tcp"
+      - "51820:51820/udp"
     volumes:
       - ./server.yaml:/etc/remlink/server.yaml:ro
       - ./data:/app/data

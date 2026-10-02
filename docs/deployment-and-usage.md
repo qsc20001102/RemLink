@@ -1,129 +1,41 @@
-# RemLink v1.0 三端部署与使用指南
+# RemLink 三端部署与使用
 
-本文覆盖 Linux Server、Windows Engineer、Windows Site 三端从准备、注册、联通、使用到备份升级的完整流程。根目录 DOCX 是需求权威来源；本文只描述当前代码和发布包已经提供的能力，不把自动化测试等同于物理环境验收。
+Server、Engineer、Site 分别部署在 Linux 服务端、工程师 Windows 电脑和现场 Windows 电脑。两个 Windows 角色使用独立目录和身份；不要在同一主机同时占用 `RemLink` 适配器。
 
-## 1. 部署边界与端口
+## 网络准备
 
-RemLink 是中心辐射结构：
+| 默认端口 | 用途 | 部署要求 |
+| --- | --- | --- |
+| `8080/tcp` | Web、Bootstrap、Admin API | 可信管理网访问，或通过 HTTPS 反向代理 |
+| `51820/udp` | WireGuard | 两类 Windows 节点必须可达，NAT 场景需转发 |
+| `7001/tcp` | Control WebSocket | 只在 Overlay 内监听，不发布公网 |
+| `6200/udp` | Session 数据报 | 只在 Overlay 内监听，不发布公网 |
 
-- Server 运行在 Linux amd64，使用内核 WireGuard `wg0`，负责注册、Overlay 地址分配、Control、Session 编排和管理页面。
-- Engineer 运行在 Windows amd64，提供 GUI；每台 Engineer 同时只允许一个非终态远程 Session。
-- Site 运行在另一台 Windows amd64，提供控制台和进程内 gVisor netstack 网关。它用本机普通套接字访问现场目标，因此 PLC 不需要返回 Overlay 的路由。
-- 两类 Windows 节点都只创建并复用一个名为 `RemLink` 的 Wintun。不要在同一 Windows 主机同时部署 Engineer 和 Site。
-- Overlay 流量全部经 Server 中转，不建立 P2P，不使用 WinNAT、Windows IP Forwarding、SNAT/MASQUERADE，也不在 Server 为现场 LAN 配置 WireGuard `AllowedIPs`。
+Server 需要 Linux amd64、内核 WireGuard。Docker 部署还需 `/dev/net/tun`、`NET_ADMIN` 和 `net.ipv4.ip_forward=1`。入口脚本会检查这些条件。
 
-| 端口 | 作用 | 暴露范围 |
-|---|---|---|
-| `8080/tcp` | Web UI、Bootstrap、Admin API | 仅可信管理网；公网部署应由外部 HTTPS 反向代理保护 |
-| `51820/udp` | WireGuard 公网入口 | Engineer 和 Site 必须可达 |
-| `7001/tcp` | Overlay Control WebSocket | 只监听 Server Overlay IP，不做公网映射 |
-| `6200/udp` | Overlay Session 数据报 | 只在 Overlay 内使用，不做公网映射 |
+默认 Overlay 为 `10.88.0.0/16`，Server IP 为 `10.88.0.1`。Overlay 不得与 Windows 主机的本地直连网络重叠。Site 本机须有到现场目标网段的直连或明确非默认路由；只有默认路由会返回 `SITE_NO_ROUTE`。
 
-`7001/tcp` 和 `6200/udp` 绝不能添加到公网端口映射。
+## Server 部署
 
-## 2. 环境准备
+### 选择发布形式
 
-### 2.1 Linux Server
+| 发布物 | 用法 |
+| --- | --- |
+| `remlink-server-1.0.8-amd64.tar.gz` | 完整镜像归档，Docker 镜像导入或 `docker load`；用 `compose.image.yaml` / 随附 `compose.yaml` 启动 |
+| `RemLink-Server-v1.0.8-docker-build.tar` | 预编译构建上下文，解压后执行 `sh build.sh`，再用随附 `compose.yaml` 启动 |
+| `RemLink-Server-v1.0.8-linux-amd64.zip` | Linux 二进制和 Docker 部署目录；用包内 `docker/compose.release.yaml` 构建运行镜像 |
+| 源码仓库 | 在 `deploy/docker` 用 `compose.yaml` 构建前端、Go 服务端和运行镜像 |
 
-准备一台 Linux amd64 主机，并确认：
+上述版本号为示例；部署时以交付物标签为准。绿联 NAS 与 1Panel 的详细步骤在源码的 `deploy/docker/README.ugreen.md`、`README.1panel.md`；Server ZIP 中对应目录为 `docker`。
 
-- 有稳定公网 IPv4 或域名；NAT 场景已把 WireGuard UDP 端口转发到 Server。
-- 内核支持 WireGuard，存在 `/dev/net/tun`，Docker 和 Compose 插件可用；原生部署还需要 `iproute2`、`iptables` 和 `wireguard-tools`。
-- 主机时间同步正常。
-- 默认 Overlay `10.88.0.0/16` 与任一 Windows 主机本地直连网段不冲突。
-- 现场 CIDR 不与 Overlay、Engineer 本地网段或保留地址冲突，且不使用 `0.0.0.0/0`。
+### 配置
 
-先完成宿主机检查：
+完整镜像不包含你的运行配置。首次部署将示例复制为 `server.yaml`；升级沿用原配置。
 
-~~~bash
-uname -m
-test -c /dev/net/tun && echo "TUN 就绪"
-sudo modprobe wireguard
-sudo ip link add dev wg-probe type wireguard
-sudo ip link del dev wg-probe
-docker version
-docker compose version
-~~~
-
-若临时 `wg-probe` 创建失败，先修复内核支持，不要用 privileged 容器绕过预检。
-
-### 2.2 Windows Engineer 与 Site
-
-每台 Windows amd64 主机需要管理员权限，并且能访问 Server 的 HTTPS/HTTP Bootstrap 地址和 WireGuard 公网 UDP 地址。主机不能有与 Overlay 冲突的本地直连网段，也不能运行另一个占用 `RemLink` 适配器的 RemLink 角色。
-
-Site 还必须从 Windows 本机访问每个现场目标网段。普通默认路由不算 Site 路由能力；目标应为直连网段或有明确非默认路由：
-
-~~~powershell
-Get-NetRoute -AddressFamily IPv4 | Sort-Object DestinationPrefix,RouteMetric | Format-Table DestinationPrefix,NextHop,InterfaceAlias,RouteMetric
-~~~
-
-## 3. 获取并核验发布包
-
-三端发布物完全分开，构建后得到三个互不包含对方程序的 ZIP：
-
-- `RemLink-Engineer-v1.0.0-windows-amd64.zip`：只包含 Engineer EXE、`engineer.yaml`、文档和校验工具。
-- `RemLink-Site-v1.0.0-windows-amd64.zip`：只包含 Site EXE、`site.yaml`、文档和校验工具。
-- `RemLink-Server-v1.0.0-linux-amd64.zip`：只包含 Linux Server、Docker 部署目录、文档和验收工具。
-
-Engineer 与 Site 是便携式目录程序。配置、身份、日志和首次释放的 `wintun.dll` 都以各自 EXE 所在目录为根，不依赖当前工作目录，也不写入 `C:\ProgramData\RemLink`。Engineer 还会在同目录生成不含秘密的 `site-profiles.json`，按 Site 记忆 Remote CIDR。不得把两个 Windows 包合并到同一个目录。
-
-先比对可信渠道公布的 ZIP SHA-256，再解压。Windows 可校验整个发布目录：
-
-~~~powershell
-.\RemLink-Engineer-v1.0.0-windows-amd64\scripts\validation\Test-ReleasePackage.ps1 -PackagePath .\RemLink-Engineer-v1.0.0-windows-amd64 -Role Engineer
-.\RemLink-Site-v1.0.0-windows-amd64\scripts\validation\Test-ReleasePackage.ps1 -PackagePath .\RemLink-Site-v1.0.0-windows-amd64 -Role Site
-.\RemLink-Server-v1.0.0-linux-amd64\scripts\validation\Test-ReleasePackage.ps1 -PackagePath .\RemLink-Server-v1.0.0-linux-amd64 -Role Server
-~~~
-
-Linux 可在包顶层执行：
-
-~~~bash
-cd RemLink-Server-v1.0.0-linux-amd64
-sha256sum -c SHA256SUMS.txt
-~~~
-
-当前构建未做 Authenticode 签名；若组织策略要求签名，应先完成内部签名发布流程。
-
-## 4. 部署 Server
-
-### 4.1 推荐：发布包 Docker Compose
-
-将发布包固定放到 `/opt/remlink`，因为持久数据位于 `docker/data`：
-
-~~~bash
-sudo mkdir -p /opt/remlink
-sudo cp -a RemLink-Server-v1.0.0-linux-amd64/. /opt/remlink/
-cd /opt/remlink/docker
-sudo cp .env.example .env
-sudo chmod 600 .env
-sudo mkdir -p data
-~~~
-
-中国大陆网络把复制命令改为 `sudo cp .env.china.example .env`。该模板使用清华 TUNA 的 Debian 主仓库和安全仓库、强制 IPv4，并关闭可能导致连接重置的 apt HTTP pipelining。Debian 12 容器的软件源是 DEB822 文件，Dockerfile 会按构建参数替换 URI。TUNA 提示安全镜像可能存在同步延迟；如果官方安全源在你的网络中稳定，可把 `REMLINK_APT_SECURITY_MIRROR` 留空。参考 [TUNA Debian 镜像说明](https://mirrors.tuna.tsinghua.edu.cn/help/debian/)。
-
-编辑 `.env`：
-
-~~~dotenv
-REMLINK_WG_ENDPOINT=vpn.example.com:51820
-REMLINK_WG_PORT=51820
-REMLINK_HTTP_BIND=127.0.0.1
-REMLINK_ADMIN_TOKEN=替换为足够长的随机管理令牌
-REMLINK_APT_FORCE_IPV4=1
-REMLINK_APT_DEBIAN_MIRROR=
-REMLINK_APT_SECURITY_MIRROR=
-~~~
-
-- `REMLINK_WG_ENDPOINT` 必须是 Windows 实际可达的公网 `主机:端口`。
-- `REMLINK_WG_PORT` 必须与 endpoint 端口、`server.yaml` 的 `wireguard_port`、NAT 和防火墙完全一致。
-- `REMLINK_HTTP_BIND=127.0.0.1` 用于同机 HTTPS 反向代理；可信管理网直连 HTTP 时改为该管理接口的具体 IP。仅在明确接受风险时使用 `0.0.0.0`。
-- `REMLINK_ADMIN_TOKEN` 建议始终设置，不能提交到版本库、截图或验收证据。
-- `REMLINK_APT_FORCE_IPV4=1` 让镜像构建阶段的 apt 避开常见 IPv6 黑洞；确认构建网络只有 IPv6 时才设为 `0`。
-- 两个 `REMLINK_APT_*_MIRROR` 只影响镜像构建，不影响 Ubuntu 宿主机软件源；中国模板已填入 TUNA URI，通用模板保持空值并使用 Debian 官方源。
-
-`server.yaml` 默认内容如下；初次使用非默认 WireGuard 端口时同步修改：
-
-~~~yaml
+```yaml
 server:
+  wg_endpoint: "vpn.example.com:51820"
+  admin_token: "replace-with-your-existing-admin-token"
   http_listen: "0.0.0.0:8080"
   control_listen: "10.88.0.1:7001"
   wireguard_port: 51820
@@ -134,344 +46,180 @@ network:
   server_overlay_ip: "10.88.0.1"
   session_udp_port: 6200
   mtu: 1280
-~~~
+```
 
-校验并启动：
+- `wg_endpoint` 填写 Windows 客户端可达的域名/IP 和 UDP 端口。其端口必须与实际生效的 WireGuard 端口一致。
+- `admin_token` 换成自己的管理令牌，并限制宿主机配置文件的读取权限。
+- `http_listen` 和 `data.directory` 使用 YAML 值。公网地址与管理令牌也从 YAML 读取。
+- Overlay CIDR、Server Overlay IP、WireGuard 端口、Session UDP 端口和 MTU 首次启动使用 YAML；数据库已有配置时使用数据库值。管理页保存网络配置不会回写 YAML。
+- 应用不读取旧的 `REMLINK_WG_ENDPOINT`、`REMLINK_ADMIN_TOKEN`。`.env` 只用于源码/发布包镜像构建阶段的 apt 参数。
 
-~~~bash
-cd /opt/remlink/docker
-sudo docker compose --env-file .env -f compose.release.yaml config --quiet
-sudo docker compose --env-file .env -f compose.release.yaml up --build -d
-sudo docker compose --env-file .env -f compose.release.yaml ps
-sudo docker compose --env-file .env -f compose.release.yaml logs --tail=100 server
-curl --fail http://127.0.0.1:8080/api/v1/server/info
-~~~
+Docker 挂载配置文件到 `/etc/remlink/server.yaml`（只读），挂载原 `data` 目录到 `/app/data`。相对路径以 Compose 项目目录为准。
 
-容器只保留 `NET_ADMIN`、映射 `/dev/net/tun`，不启用 privileged。预检失败时根据日志修复 TUN、内核 WireGuard、转发或 capability 问题，不要扩大权限。
+### 使用已有镜像
 
-防火墙应允许 Windows 来源访问 `51820/udp`。直接使用 HTTP 时只允许可信管理网访问 `8080/tcp`；反向代理时只开放 `443/tcp` 并保留 `REMLINK_HTTP_BIND=127.0.0.1`；不要开放 `7001` 和 `6200`。
+在镜像压缩包所在目录导入：
 
-### 4.2 HTTPS 反向代理
+```sh
+sha256sum -c remlink-server-1.0.8-amd64.tar.gz.sha256
+docker load -i remlink-server-1.0.8-amd64.tar.gz
+```
 
-RemLink v1.0 本身不终止 TLS。公网 Bootstrap 若直接使用 HTTP，Join Token、Node Token 和 Admin 请求不会被 HTTP 层加密；WireGuard 不能保护这条独立公网路径。
+将随附的 `compose.yaml`、配置和数据放在固定部署目录，例如 `/opt/remlink`：
 
-可用 Nginx、Caddy 或组织网关终止 HTTPS。Nginx 最小代理段如下，证书按实际配置：
+```text
+/opt/remlink/
+  compose.yaml
+  server.yaml
+  data/
+```
 
-~~~nginx
-server {
-    listen 443 ssl;
-    server_name remlink.example.com;
-    ssl_certificate /etc/ssl/remlink/fullchain.pem;
-    ssl_certificate_key /etc/ssl/remlink/privkey.pem;
-    location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-    }
-}
-~~~
+在该目录执行，下面的首次初始化命令只适用于新部署：
 
-Windows YAML 的 `server` 随后填写 `https://remlink.example.com`，不能附加路径、查询参数、片段或 URL 用户名密码。
+```sh
+cp server.example.yaml server.yaml
+mkdir -p data
+# 编辑 server.yaml 后执行
+docker compose -f compose.yaml config --quiet
+docker compose -f compose.yaml up -d --pull never
+docker compose -f compose.yaml ps
+docker compose -f compose.yaml logs --tail=100 server
+docker compose -f compose.yaml exec server remlink-server -config /etc/remlink/server.yaml -healthcheck
+```
 
-### 4.3 获取和轮换 Join Token
+`server.example.yaml` 来自随附部署文件。`server.yaml` 必须预先存在且是文件。镜像已包含启动命令和健康检查；Compose 使用本地镜像。
 
-首次启动成功后获取当前 Token：
+### 使用构建上下文或 Server ZIP
 
-~~~bash
-cd /opt/remlink/docker
-sudo docker compose --env-file .env -f compose.release.yaml exec server remlink-server -config /etc/remlink/server.yaml -print-join-token
-~~~
+构建上下文 TAR：
 
-Token 在轮换前可登记多个节点，不是每使用一次自动失效。全部预期节点注册后立即轮换：
+```sh
+tar -xf RemLink-Server-v1.0.8-docker-build.tar
+cd RemLink-Server-v1.0.8-docker-build
+sha256sum -c SHA256SUMS.txt
+sh build.sh
+```
 
-~~~bash
-sudo docker compose --env-file .env -f compose.release.yaml exec server remlink-server -config /etc/remlink/server.yaml -rotate-join-token
-~~~
+然后在部署目录使用随附 `compose.yaml`、`server.example.yaml`，按“使用已有镜像”流程启动。
 
-也可在管理页面“网络”页查看当前 Join Token 或主动轮换；网络页刷新后仍可查看当前值。普通部署与保存网络配置不会轮换 Join Token。已注册节点使用各自的 Node Token，轮换 Join Token 仅使旧值无法用于新的首次注册。
+Server ZIP 解压后，在包内 `docker` 目录编辑 `server.yaml` 并创建数据目录：
 
-### 4.4 可选：原生 Linux 服务
+```sh
+mkdir -p data
+docker compose -f compose.release.yaml config --quiet
+docker compose -f compose.release.yaml up --build -d
+```
 
-~~~bash
-sudo apt-get update
-sudo apt-get install -y ca-certificates iproute2 iptables wireguard-tools
-sudo install -m 0755 linux-amd64/remlink-server /usr/local/bin/remlink-server
-sudo install -d -m 0750 /etc/remlink /var/lib/remlink
-sudo cp linux-amd64/server.yaml /etc/remlink/server.yaml
-sudo chmod 0640 /etc/remlink/server.yaml
-~~~
+源码构建在仓库 `deploy/docker` 目录执行 `docker compose -f compose.yaml up --build -d`。两种 Compose 构建方式均可选 `cp .env.china.example .env` 设置 apt 镜像；仅使用已有镜像时无需 `.env`。
 
-把 `/etc/remlink/server.yaml` 的 `data.directory` 改为 `/var/lib/remlink`。创建 root 专用的 `/etc/remlink/remlink.env`：
+### 管理入口和 Join Token
 
-~~~dotenv
-REMLINK_WG_ENDPOINT=vpn.example.com:51820
-REMLINK_ADMIN_TOKEN=替换为足够长的随机管理令牌
-~~~
+浏览器打开 `http://Server地址:8080`，填写 `server.admin_token`。跨公网使用时，在现有网关配置 HTTPS 反向代理，并让 Windows 配置中的 `server` 指向相应 HTTPS URL；Server 本身不终止 TLS。
 
-创建 `/etc/systemd/system/remlink-server.service`：
+在已有镜像的 Compose 项目目录查看或轮换注册令牌：
 
-~~~ini
-[Unit]
-Description=RemLink Server
-After=network-online.target
-Wants=network-online.target
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/var/lib/remlink
-EnvironmentFile=/etc/remlink/remlink.env
-ExecStart=/usr/local/bin/remlink-server -config /etc/remlink/server.yaml
-Restart=on-failure
-RestartSec=3
-NoNewPrivileges=true
-[Install]
-WantedBy=multi-user.target
-~~~
+```sh
+docker compose -f compose.yaml exec server remlink-server -config /etc/remlink/server.yaml -print-join-token
+docker compose -f compose.yaml exec server remlink-server -config /etc/remlink/server.yaml -rotate-join-token
+```
 
-~~~bash
-sudo chmod 600 /etc/remlink/remlink.env
-sudo systemctl daemon-reload
-sudo systemctl enable --now remlink-server
-sudo systemctl status remlink-server
-sudo journalctl -u remlink-server -n 100 --no-pager
-curl --fail http://127.0.0.1:8080/api/v1/server/info
-sudo /usr/local/bin/remlink-server -config /etc/remlink/server.yaml -print-join-token
-~~~
+其他部署方式替换 `-f` 后的编排文件名。也可在管理页“网络”查看和轮换 Join Token。轮换前同一个 Join Token 可登记多个节点；已登记节点使用 Node Token，轮换不会撤销它们。
 
-原生进程需管理 `wg0`、路由和转发规则；当前基线以 root 运行，但不关闭主机防火墙，也不配置 SNAT。
+### 原生 Linux
 
-## 5. 部署 Engineer
+如果直接运行 Server ZIP 中的 `linux-amd64/remlink-server`，安装 `ca-certificates`、`iproute2`、`iptables` 和 `wireguard-tools`。将配置的 `data.directory` 改为实际持久目录，例如 `/var/lib/remlink`。进程需要管理内核 WireGuard 与转发规则的权限：
 
-将 Engineer ZIP 单独解压到 Engineer 主机。建议把解压后的顶层目录固定为 `C:\RemLink\Engineer`，然后以管理员身份打开 PowerShell：
+```sh
+sudo ./linux-amd64/remlink-server -config /etc/remlink/server.yaml
+```
 
-~~~powershell
-Set-Location C:\RemLink\Engineer
-notepad .\engineer.yaml
-~~~
+可用 systemd 管理该进程；停止时发送 SIGTERM，并为应用的 10 秒 HTTP 关闭过程留出时间。
 
-配置文件直接包含首次注册所需的 Join Token：
+## Engineer 和 Site
 
-~~~yaml
+将两个 Windows ZIP 分别解压到可持续写入的独立目录，例如 `C:\RemLink\Engineer` 和 `C:\RemLink\Site`。它们的默认配置路径以 EXE 所在目录为准。
+
+Engineer 的 `engineer.yaml`：
+
+```yaml
 server: "https://remlink.example.com"
 node_name: "Engineer-Shanghai-01"
 join_token: "粘贴从 Server 获取的 Join Token"
-~~~
+```
 
-`join_token` 以明文保存在本机 YAML 中，仅在尚无 `identity.json` 时用于首次注册。`NodeID`、`NodeToken` 和 WireGuard 私钥仍由程序管理，不能加入 YAML。默认文件位置：
+Site 的 `site.yaml`：
 
-- 配置：`C:\RemLink\Engineer\engineer.yaml`
-- 身份：`C:\RemLink\Engineer\identity.json`
-- 日志：`C:\RemLink\Engineer\logs\engineer.jsonl`
-- Wintun：`C:\RemLink\Engineer\wintun.dll`，由 EXE 首次释放并校验 SHA-256，不与 Site 共用文件。
-
-保存配置后直接首次启动：
-
-~~~powershell
-.\RemLinkEngineer.exe
-~~~
-
-程序使用 Windows 机器级 DPAPI 保护注册后的身份。确认管理页显示节点 ONLINE 后，关闭 GUI并重新启动一次：
-
-~~~powershell
-.\RemLinkEngineer.exe
-~~~
-
-生产运行仍需管理员权限。Engineer 是交互式 GUI，不要注册为 SYSTEM 后台任务。
-
-## 6. 部署 Site
-
-将 Site ZIP 单独解压到另一台 Site 主机。建议把解压后的顶层目录固定为 `C:\RemLink\Site`，然后以管理员身份打开 PowerShell：
-
-~~~powershell
-Set-Location C:\RemLink\Site
-notepad .\site.yaml
-~~~
-
-~~~yaml
+```yaml
 server: "https://remlink.example.com"
-node_name: "Qingdao-Site-01"
+node_name: "Site-Qingdao-01"
 join_token: "粘贴从 Server 获取的 Join Token"
 netstack:
   tcp_flow_limit: 2048
   udp_flow_limit: 4096
   udp_idle_seconds: 60
-~~~
+```
 
-Site YAML 不允许保存现场 LAN CIDR；CIDR 由每次 Engineer Session 动态下发。三个 netstack 数值必须为正，`udp_idle_seconds` 范围为 1–86400 秒。
+`server` 只允许 HTTP/HTTPS 根地址，不带额外路径、查询参数或用户名密码。Site 配置不填写现场 CIDR；它由 Engineer 在创建会话时下发。首次注册令牌优先级为 `-join-token`、`REMLINK_JOIN_TOKEN`、YAML `join_token`。
 
-保存配置后直接首次启动：
+以管理员身份在各自目录运行：
 
-~~~powershell
+```powershell
+# 工程师电脑
+.\RemLinkEngineer.exe
+# 现场电脑
 .\RemLinkSite.exe
-~~~
+```
 
-看到以下状态后按 `Ctrl+C` 停止，再不带 Token 重启：
+Site 控制台会显示 `OverlayIP`、`WireGuard=已连接`、`Control=已连接`，以及 `远程网段=就绪 子网网关=gVisor netstack/就绪`。Server 节点页应显示 ONLINE。全部预期节点注册后可以轮换 Join Token。
 
-~~~text
-OverlayIP=<分配地址> WireGuard=CONNECTED
-Control=CONNECTED
-RemoteSubnet=READY SubnetGateway=GVISOR_NETSTACK/READY
-~~~
+| 运行文件 | 作用 |
+| --- | --- |
+| `engineer.yaml` / `site.yaml` | 当前角色配置，Join Token 是明文首次注册便捷项 |
+| `identity.json` | DPAPI 保护的节点身份，只能在生成它的 Windows 主机使用 |
+| `logs/engineer.jsonl` / `logs/site.jsonl` | 角色日志 |
+| `wintun.dll` | 内嵌固定版本运行库，首次释放并校验摘要 |
+| `site-profiles.json` | 仅 Engineer 使用，按 Site NodeID 保存远程 CIDR |
 
-Site 的配置位于 `C:\RemLink\Site\site.yaml`，身份位于 `C:\RemLink\Site\identity.json`，日志位于 `C:\RemLink\Site\logs\site.jsonl`，Wintun 位于 `C:\RemLink\Site\wintun.dll`。这些文件均属于 Site 包目录，不与 Engineer 共用。Engineer/Site 的 Token 取值优先级均为命令行 `-join-token`、环境变量 `REMLINK_JOIN_TOKEN`、YAML `join_token`；日常部署只填写 YAML 即可。
+Engineer 使用交互式 GUI。Site 如需开机启动，可在前台完成注册后，用 Windows 计划任务以最高权限运行 Site EXE，并指定配置文件和工作目录；不要与前台进程同时运行。
 
-如需随系统启动，先在前台完成注册和联通验证，停止前台进程，再注册最高权限任务：
+## 连接现场
 
-~~~powershell
-$action = New-ScheduledTaskAction -Execute 'C:\RemLink\Site\RemLinkSite.exe' -Argument '-config "C:\RemLink\Site\site.yaml"' -WorkingDirectory 'C:\RemLink\Site'
-$trigger = New-ScheduledTaskTrigger -AtStartup
-$principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-Register-ScheduledTask -TaskName 'RemLink Site' -Action $action -Trigger $trigger -Principal $principal
-Start-ScheduledTask -TaskName 'RemLink Site'
-Get-ScheduledTaskInfo -TaskName 'RemLink Site'
-~~~
+1. 在 Site 本机验证目标可达，例如 `ping 192.168.13.10` 或 `Test-NetConnection 192.168.13.10 -Port 502`。
+2. 在 Engineer 确认服务器和 Control 在线，选择就绪的 Site。
+3. 添加一个或多个远程 CIDR，例如 `192.168.13.0/24`。本地冲突检查必须通过。
+4. 点击连接，等待会话到 `ACTIVE` 后再用原生工具访问现场目标。
+5. 完成后断开会话。切换 Site 前先关闭当前会话。
 
-不要同时运行前台 Site 和计划任务。SYSTEM 可读取同机机器级 DPAPI 身份；身份复制到另一台机器后不能解密，迁移主机必须重新注册。
+现场网段按 Site 独立保存。多个 Engineer 可访问同一 Site；不同 Site 允许使用相同 CIDR。Site 离线会关闭相关会话。Server 重启后旧会话关闭，节点可重连，Engineer 需重新创建会话。
 
-## 7. 首次联通检查
+## 管理、备份与升级
 
-Server：
+管理页可查看和修改节点、断开会话、修改网络参数、查看事件日志。修改 WireGuard 端口后，同时修改 YAML 的 `wg_endpoint` 端口和 Compose UDP 映射，再重新创建容器。
 
-~~~bash
-cd /opt/remlink/docker
-sudo docker compose --env-file .env -f compose.release.yaml ps
-sudo docker compose --env-file .env -f compose.release.yaml exec server wg show wg0
-sudo docker compose --env-file .env -f compose.release.yaml logs --tail=100 server
-~~~
+升级前停止 Server，备份原 `server.yaml` 和完整 `data`。新镜像导入后在原部署目录重新创建：
 
-应看到两个 Windows peer 的最近握手和计数；每个 peer 在 Server 只应有自己的 Overlay `/32`。
+```sh
+docker compose -f compose.yaml up -d --force-recreate --pull never
+```
 
-分别在 Engineer 和 Site：
+Server 数据包含数据库 `remlink.db`、WireGuard 密钥 `server-wg.key` 和 `logs/server.jsonl`。不要用新示例覆盖原配置，也不要重新生成旧节点依赖的数据库和密钥。
 
-~~~powershell
-$adapter = @(Get-NetAdapter -Name RemLink -ErrorAction Stop)
-if ($adapter.Count -ne 1) { throw "RemLink 适配器数量不是 1" }
-$adapter | Format-List Name,Status,InterfaceDescription,ifIndex
-Get-NetIPAddress -InterfaceAlias RemLink -AddressFamily IPv4
-Get-NetIPConfiguration -InterfaceAlias RemLink
-~~~
+Windows 升级前退出对应进程，保留本端 YAML、`identity.json`、`logs`、`wintun.dll`，Engineer 还须保留 `site-profiles.json`。更换 Windows 主机时重新注册，不能跨机器复制 DPAPI 身份。
 
-应只有一个 `RemLink` 适配器，地址属于 Overlay，MTU 为 1280。不要安装 WireGuardNT 第二适配器。
+## 常见问题
 
-浏览器打开受保护的 Server URL。若配置了管理令牌，在左侧令牌框输入后点击“应用”。依次检查：
+| 现象 | 检查 |
+| --- | --- |
+| 配置文件是目录或不存在 | 确认 Compose 项目目录及文件挂载来源 |
+| WireGuard 预检失败 | 宿主机内核、TUN、`NET_ADMIN`、IPv4 转发 |
+| endpoint 端口不匹配 | YAML 公网端口、数据库实际端口与 UDP 映射 |
+| 管理页 401 | 管理令牌是否与 YAML 一致 |
+| `JOIN_TOKEN_INVALID` | 当前 Join Token 是否已轮换 |
+| `NODE_AUTH_FAILED` | 身份是否被撤销、损坏或迁移到其他机器 |
+| `OVERLAY_LOCAL_CONFLICT` | Overlay 是否与 Windows 本地网络重叠 |
+| `CIDR_LOCAL_CONFLICT` | Engineer 本地网络/路由是否覆盖远程 CIDR |
+| `SITE_NO_ROUTE` | Site 是否存在到目标的非默认路由 |
+| `ENGINEER_SESSION_EXISTS` | 当前非终态会话是否已关闭 |
+| ONLINE 但业务不通 | Site 目标可达、WireGuard 握手、会话 ACTIVE、Engineer 路由和应用日志 |
 
-- “节点”：Engineer/Site 为 ONLINE，Overlay IP 唯一，WG Handshake 与 LastSeen 更新。
-- “会话”：首次部署为空。
-- “网络”：Overlay、Server IP、端口和 MTU 正确。
-- “日志”：没有持续 ERROR。
-
-全部节点登记后轮换 Join Token。
-
-## 8. 建立并使用 Session
-
-1. 在 Site 本机先验证目标，例如 `ping 192.168.13.10` 和 `Test-NetConnection 192.168.13.10 -Port 502`。目标网段必须有直连或明确非默认路由。
-2. 启动 Engineer，确认“服务器已连接”和“Control 在线”。
-3. 选择 ONLINE 且 Remote Subnet“可用”的 Site。
-4. 输入规范 CIDR，例如 `192.168.13.0/24`；可添加多个。
-5. 等待本地冲突预检显示“通过，无冲突”。失败时处理 Engineer 已有直连/路由，不能强行绕过。
-6. 点击“连接现场”。正常状态为“正在创建（`CREATING`）”→“正在准备现场端（`PREPARING_SITE`）”→“准备就绪（`READY`）”→“活动中（`ACTIVE`）”。
-7. ACTIVE 后用原生工具访问目标：
-
-~~~powershell
-ping 192.168.13.10
-Test-NetConnection 192.168.13.10 -Port 102
-Test-NetConnection 192.168.13.10 -Port 502
-Test-NetConnection 192.168.13.10 -Port 80
-~~~
-
-TCP、UDP 和受约束的 ICMP Echo 走通用 netstack/主机套接字，不依赖协议专用代理。Site 日志记录 Session 和路由结果，不记录数据包载荷。
-
-8. 结束后点击“断开会话”，确认 Engineer 远程路由删除。异常退出后，下次启动会清理本程序拥有的陈旧路由。
-
-每个 Engineer 同时只能有一个非终态 Session；切换 Site 前先断开。多个 Engineer 可访问同一 Site，两个 Site 也可各自使用相同现场 CIDR，SessionID 会隔离数据流。
-
-Engineer 的 Remote CIDR 按 Site NodeID 独立保存。选择现场时只加载并发送该现场的网段，例如现场 A 可保存 `192.168.17.0/24`，现场 B 可保存 `192.168.107.0/24`，不需要来回删除和重建。Site 心跳超过离线阈值后，Server 会以 `SITE_OFFLINE` 自动关闭相关会话并通知 Engineer 清理本地路由。
-
-## 9. 日常管理
-
-- “节点”页可改名称或 Overlay IP、撤销节点。修改在线节点 IP 会关闭相关 Session 并触发重新 Bootstrap；撤销后旧 Node Token 失效。
-- “会话”页显示 SessionID、两端节点、CIDR、状态、计数和持续时间，可强制断开 ACTIVE Session。
-- “日志”页可按时间、级别、模块、Node ID 和 Session ID 过滤。
-- Server 文件日志：Docker 为 `/opt/remlink/docker/data/logs/server.jsonl`；原生为 `/var/lib/remlink/logs/server.jsonl`。
-
-三端面向操作员的日志消息、状态、级别、模块和常见错误均显示中文。协议状态、模块名与错误码会保留在括号中，例如“现场端没有通往远程网段的明确路由（`SITE_NO_ROUTE`）”，便于按文档和接口继续检索。Server 管理页会把旧版本已经写入数据库的常见英文事件即时翻译为中文；数据库原始记录不会被批量改写。JSON 文件日志的 `time`、`level`、`module`、`session_id` 等字段名保持稳定，供脚本和采集系统使用，`msg` 内容改为中文。
-
-同机重新登记时，先停止角色进程/任务，把对应 `identity.json` 移到受控备份位置，再使用新 Join Token；不要编辑 DPAPI 内容。
-
-修改完整 Overlay 前，先检查所有 Windows 主机无本地冲突。保存后 Server 会暂停新 Session、关闭现有 Session、更新数据库与 `wg0`，通知节点重新 Bootstrap，再切换监听。
-
-Docker 修改 WireGuard 端口后，还要把 `.env` 的 `REMLINK_WG_PORT` 和 `REMLINK_WG_ENDPOINT` 改成同一端口并重建映射：
-
-~~~bash
-cd /opt/remlink/docker
-sudo docker compose --env-file .env -f compose.release.yaml up -d --force-recreate
-~~~
-
-重建期间短暂离线，`docker/data` 中数据库和密钥保留。
-
-## 10. 备份、恢复与升级
-
-Docker 权威数据均在 `docker/data`。一致性备份：
-
-~~~bash
-cd /opt/remlink/docker
-sudo docker compose --env-file .env -f compose.release.yaml stop server
-sudo tar -C /opt/remlink/docker -czf /安全备份目录/remlink-data-$(date +%F-%H%M%S).tgz data
-sudo docker compose --env-file .env -f compose.release.yaml start server
-~~~
-
-同时备份 `server.yaml` 和受保护的 `.env`。恢复时先停止 Server，恢复到原位置并保持权限，再启动检查节点重连。原生部署对应备份 `/var/lib/remlink`、`/etc/remlink/server.yaml` 和 `remlink.env`。
-
-Windows `identity.json` 是机器级 DPAPI 密文，只能在生成它的主机恢复，不能用于跨机器迁移。更换主机应撤销旧节点并重新登记。
-
-从旧版 `ProgramData` 目录模型升级时，必须先停止对应 Windows 进程。在同一台主机上，可把旧的 `C:\ProgramData\RemLink\Engineer\identity.json` 或 `C:\ProgramData\RemLink\Site\identity.json` 手工复制到新包 EXE 旁；机器级 DPAPI 密文仍可解密。日志可按需归档，不要把 Engineer 身份复制给 Site，也不要跨主机复制。确认新包已正常重连后，再决定是否归档旧目录；新版本不会继续读写旧目录。
-
-升级顺序：
-
-1. 核验新包，断开 Session，备份 Server 数据。
-2. 停止三端。
-3. 固定使用 `/opt/remlink` 时保留 `docker/data` 和本机 `docker/.env`，替换其余发布文件；原生部署替换 Server 二进制。
-4. 分别替换 Engineer、Site 包目录中的 EXE；保留同目录的 YAML、`identity.json`、`logs` 和已验证的 `wintun.dll`。不要用另一端的包覆盖当前目录。
-5. 先启动 Server，再 Site，最后 Engineer。
-6. 核对版本、节点 ONLINE、`wg show wg0`、日志和一条测试 Session。
-
-Server 重启会关闭数据库中遗留的非终态 Session；升级后应新建 Session，不要期待旧 Session 自动恢复。
-
-## 11. 常见故障
-
-| 现象或错误 | 处理 |
-|---|---|
-| endpoint 端口不匹配 | `REMLINK_WG_ENDPOINT` 端口必须等于已保存的 `wireguard_port`；同时核对 `REMLINK_WG_PORT`、NAT、防火墙 |
-| 容器预检失败 | 检查 `/dev/net/tun`、内核 WireGuard、`NET_ADMIN` 和 IPv4 forwarding；不要改 privileged |
-| 构建长时间停在 `apt-get` | 中国大陆先使用 `.env.china.example`；再运行 `docker run --rm debian:bookworm-slim sh -c "apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=2 -o Acquire::http::Timeout=30 update"`；若仍超时，修复 Docker daemon DNS/代理或用 `docker build --network=host` |
-| Admin 401 | 输入与 `REMLINK_ADMIN_TOKEN` 完全一致的 Bearer token |
-| `JOIN_TOKEN_INVALID` | 安全获取当前 Token；不要继续使用已轮换值 |
-| `NODE_AUTH_FAILED` | 身份被撤销、损坏或复制到其他机器；隔离旧身份并重新登记 |
-| `OVERLAY_LOCAL_CONFLICT` | Overlay 与 Windows 本地直连网段重叠；恢复或选择无冲突 Overlay |
-| `CIDR_LOCAL_CONFLICT` | Engineer 本机已有覆盖远程 CIDR 的网络/路由；处理后重新预检 |
-| `SITE_NO_ROUTE` | Site 只有默认路由或无路由；增加真实直连/静态路由并先在 Site 验证 |
-| `NETSTACK_UNAVAILABLE` / `FLOW_LIMIT_REACHED` | 检查 Site 就绪、流量上限和长连接；按容量调整配置并重启 |
-| `SESSION_INJECT_FAILED` | 当前 Session 会关闭；检查适配器、路由和日志后新建 |
-| `ENGINEER_SESSION_EXISTS` | 先断开当前非终态 Session |
-| 节点 ONLINE 但业务不通 | 依次检查 Site 本机目标、Server `wg show`、Session ACTIVE、Engineer 路由、Site 日志和主机防火墙 |
-
-## 12. 验收、停用
-
-发布包中初始化验收：
-
-~~~powershell
-.\scripts\validation\New-AcceptanceRun.ps1 -OutputDirectory C:\RemLink-Evidence\run-001
-~~~
-
-按 `docs/validation/T01-T18-runbook.md` 采证，用 `Set-AcceptanceResult.ps1` 记录，再运行：
-
-~~~powershell
-.\scripts\validation\Test-AcceptanceRun.ps1 -RunDirectory C:\RemLink-Evidence\run-001
-~~~
-
-证据不存在、哈希不一致或前置 Gate 未通过时，不得标记 PASS。至少验证单适配器、Overlay 双向连通、目标 ICMP/TCP/UDP、断线重连、Server 重启、陈旧路由清理、节点 IP/Overlay 迁移和重复现场网段隔离。
-
-停用时：Engineer 先断开 Session；Site 计划任务先执行 `Stop-ScheduledTask -TaskName 'RemLink Site'`，永久取消再执行 `Unregister-ScheduledTask -TaskName 'RemLink Site'`；Server 停止后归档 data 和配置；撤销不再使用的节点并轮换 Join Token。
-
-当前包没有 Windows 卸载器。持久 `RemLink` Wintun 适配器是设计行为；若只暂停使用，可在确认没有 RemLink 进程后禁用。删除 Engineer 或 Site 包目录会同时删除该端身份和日志；执行前必须备份，并确认明确放弃该主机身份。不要用不明脚本删除第三方网络适配器。
+实机验收使用源码或 Server ZIP 中的 `docs/validation/T01-T18-runbook.md` 与 `scripts/validation` 工具。先初始化运行目录，再采证、记录结果和校验；自动化测试不能替代指定部署的真实联通结果。

@@ -3,14 +3,47 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"remlink/internal/database"
 	"remlink/internal/model"
 )
+
+func TestHealthcheckUsesConfiguredListenerWithoutOpeningDatabase(t *testing.T) {
+	var status atomic.Int32
+	status.Store(http.StatusOK)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/server/info" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.WriteHeader(int(status.Load()))
+	}))
+	defer server.Close()
+	root := t.TempDir()
+	data := filepath.Join(root, "not-created")
+	path := filepath.Join(root, "server.yaml")
+	content := fmt.Sprintf("server:\n  http_listen: %q\ndata:\n  directory: %q\n", strings.TrimPrefix(server.URL, "http://"), data)
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-config", path, "-healthcheck"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(data); !os.IsNotExist(err) {
+		t.Fatalf("healthcheck touched data: %v", err)
+	}
+	status.Store(http.StatusServiceUnavailable)
+	if err := run([]string{"-config", path, "-healthcheck"}); err == nil {
+		t.Fatal("unhealthy listener accepted")
+	}
+}
 
 func TestValidateEndpoint(t *testing.T) {
 	for _, endpoint := range []string{"203.0.113.1:51820", "vpn.example.test:51820"} {

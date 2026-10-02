@@ -24,10 +24,10 @@ try {
 $allowedDLLs = @(
     "internal/platform/windows/wintunruntime/assets/amd64/wintun.dll"
 )
-$forbiddenDirectoryPattern = '(^|/)(build|dist|node_modules|data|runtime|evidence|\.codex-qa)(/|$)'
+$forbiddenDirectoryPattern = '(^|/)(build|dist|node_modules|data|runtime|evidence|\.codex-qa|\.cache|\.local-deploy|__pycache__)(/|$)'
 $forbiddenRuntimeNamePattern = '(^|/)(identity\.json|site-profiles\.json)$'
-$forbiddenExtensions = @(".exe", ".zip", ".db", ".sqlite", ".log", ".jsonl", ".key", ".pem", ".p12", ".pfx")
-$textExtensions = @(".go", ".ts", ".vue", ".css", ".html", ".md", ".yaml", ".yml", ".json", ".ps1", ".sh", ".txt", ".mod", ".sum")
+$forbiddenExtensions = @(".exe", ".zip", ".tar", ".gz", ".tgz", ".7z", ".pyc", ".pyo", ".db", ".sqlite", ".log", ".jsonl", ".key", ".pem", ".p12", ".pfx")
+$textExtensions = @(".go", ".ts", ".vue", ".css", ".html", ".md", ".yaml", ".yml", ".json", ".ps1", ".sh", ".py", ".txt", ".mod", ".sum")
 $maximumSourceFileBytes = 10MB
 
 foreach ($candidate in $candidateFiles) {
@@ -41,6 +41,9 @@ foreach ($candidate in $candidateFiles) {
     $extension = [System.IO.Path]::GetExtension($relative).ToLowerInvariant()
     if ($relative -match $forbiddenDirectoryPattern) {
         $violations.Add("generated/runtime directory is a Git candidate: $relative")
+    }
+    if ($relative -eq "deploy-server.cmd") {
+        $violations.Add("local deployment helper is a Git candidate: $relative")
     }
     if ($relative -match $forbiddenRuntimeNamePattern) {
         $violations.Add("runtime identity/profile is a Git candidate: $relative")
@@ -61,7 +64,7 @@ foreach ($candidate in $candidateFiles) {
     # PowerShell treats dotfiles as hidden on Linux. Provider cmdlets such as
     # Get-Item/Get-Content may require -Force there even for an explicit path,
     # while the same files are ordinary on Windows. System.IO has consistent
-    # behavior on both platforms and prevents CI from failing on .dockerignore,
+    # behavior on both platforms when checking .dockerignore,
     # .gitattributes, and .gitignore.
     $file = [System.IO.FileInfo]::new($absolute)
     if ($file.Length -gt $maximumSourceFileBytes) {

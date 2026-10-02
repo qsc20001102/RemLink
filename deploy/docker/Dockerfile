@@ -13,7 +13,7 @@ RUN go mod download
 COPY . .
 COPY --from=frontend /src/frontend/engineer/dist ./frontend/engineer/dist
 COPY --from=frontend /src/frontend/server/dist ./frontend/server/dist
-ARG REMLINK_VERSION=1.0.0
+ARG REMLINK_VERSION=1.0.8
 ARG REMLINK_COMMIT=container
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
     -ldflags "-s -w -X remlink/internal/version.Version=${REMLINK_VERSION} -X remlink/internal/version.Commit=${REMLINK_COMMIT}" \
@@ -42,6 +42,6 @@ RUN chmod 0755 /usr/local/bin/remlink-server /usr/local/bin/remlink-preflight \
 VOLUME ["/app/data"]
 EXPOSE 8080/tcp 51820/udp
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=4 \
-  CMD curl --fail --silent --show-error http://127.0.0.1:8080/api/v1/server/info >/dev/null || exit 1
+  CMD ["/usr/local/bin/remlink-server", "-config", "/etc/remlink/server.yaml", "-healthcheck"]
 ENTRYPOINT ["/usr/local/bin/remlink-preflight"]
 CMD ["/usr/local/bin/remlink-server", "-config", "/etc/remlink/server.yaml"]
