@@ -13,7 +13,7 @@ const (
 )
 
 // EngineerConfig contains portable Engineer settings. JoinToken is an optional
-// plaintext first-registration convenience; durable Node secrets stay in DPAPI.
+// registration/reconfiguration convenience; durable Node secrets stay in DPAPI.
 type EngineerConfig struct {
 	Server    string `yaml:"server"`
 	NodeName  string `yaml:"node_name"`
@@ -21,7 +21,7 @@ type EngineerConfig struct {
 }
 
 // SiteConfig contains portable Site settings. JoinToken has the same
-// first-registration-only semantics as EngineerConfig.JoinToken.
+// registration/reconfiguration semantics as EngineerConfig.JoinToken.
 type SiteConfig struct {
 	Server    string             `yaml:"server"`
 	NodeName  string             `yaml:"node_name"`

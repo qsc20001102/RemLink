@@ -29,14 +29,15 @@ type Protector interface {
 
 // Identity is the durable Node identity used by Bootstrap and reconciliation.
 type Identity struct {
-	NodeID        string
-	NodeType      model.NodeType
-	NodeName      string
-	PrivateKey    wgtypes.Key
-	NodeToken     string
-	ServerURL     string
-	ConfigVersion uint64
-	OwnedRoutes   []string
+	NodeID             string
+	NodeType           model.NodeType
+	NodeName           string
+	RegisteredNodeName string
+	PrivateKey         wgtypes.Key
+	NodeToken          string
+	ServerURL          string
+	ConfigVersion      uint64
+	OwnedRoutes        []string
 }
 
 // PublicKey derives the shareable WireGuard key from the protected private key.
@@ -168,8 +169,13 @@ func (s *Store) Load() (Identity, error) {
 	}
 	identity := Identity{
 		NodeID: stored.NodeID, NodeType: stored.NodeType, NodeName: stored.NodeName,
-		PrivateKey: privateKey, NodeToken: nodeToken, ServerURL: stored.ServerURL,
+		RegisteredNodeName: stored.RegisteredNodeName,
+		PrivateKey:         privateKey, NodeToken: nodeToken, ServerURL: stored.ServerURL,
 		ConfigVersion: stored.ConfigVersion, OwnedRoutes: append([]string(nil), stored.OwnedRoutes...),
+	}
+	// Older identities only stored one name, which was the registered name.
+	if identity.RegisteredNodeName == "" && identity.NodeToken != "" {
+		identity.RegisteredNodeName = identity.NodeName
 	}
 	if err := identity.Validate(false); err != nil {
 		return Identity{}, fmt.Errorf("validate Node identity: %w", err)
@@ -198,6 +204,7 @@ func (s *Store) Save(identity Identity) error {
 	stored := diskIdentity{
 		Version: diskVersion, NodeID: identity.NodeID, NodeType: identity.NodeType,
 		NodeName: identity.NodeName, ProtectedPrivateKey: protectedPrivateKey,
+		RegisteredNodeName: identity.RegisteredNodeName,
 		ProtectedNodeToken: protectedNodeToken, ServerURL: identity.ServerURL,
 		ConfigVersion: identity.ConfigVersion, OwnedRoutes: identity.OwnedRoutes,
 	}
@@ -257,6 +264,7 @@ type diskIdentity struct {
 	NodeID              string         `json:"node_id"`
 	NodeType            model.NodeType `json:"node_type"`
 	NodeName            string         `json:"node_name"`
+	RegisteredNodeName  string         `json:"registered_node_name,omitempty"`
 	ProtectedPrivateKey string         `json:"protected_wg_private_key"`
 	ProtectedNodeToken  string         `json:"protected_node_token,omitempty"`
 	ServerURL           string         `json:"server_url"`

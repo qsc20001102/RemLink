@@ -1,7 +1,10 @@
 [CmdletBinding()]
 param(
     [string]$Version = "1.0.8",
-    [string]$OutputDirectory = "dist"
+    [string]$OutputDirectory = "dist",
+    [ValidateSet("Engineer", "Site", "Server")]
+    [string[]]$Roles = @("Engineer", "Site", "Server"),
+    [switch]$SkipArchive
 )
 
 $ErrorActionPreference = "Stop"
@@ -64,6 +67,10 @@ function New-PackageArchive {
         [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)][string]$Role
     )
+    if ($SkipArchive) {
+        & (Join-Path $repository "scripts/validation/Test-ReleasePackage.ps1") -PackagePath $Root -Role $Role
+        return $Root
+    }
     $archivePath = Join-Path $releaseRoot "$Name.zip"
     if (Test-Path -LiteralPath $archivePath) {
         Remove-Item -LiteralPath $archivePath -Force
@@ -74,28 +81,32 @@ function New-PackageArchive {
 }
 
 New-Item -ItemType Directory -Force -Path $releaseRoot | Out-Null
-$generatedTargets = @(
-    $engineerRoot, $siteRoot, $serverRoot,
-    (Join-Path $releaseRoot "RemLink-v$Version"),
-    (Join-Path $releaseRoot "RemLink-v$Version.zip")
-)
+$generatedTargets = @()
+if ("Engineer" -in $Roles) { $generatedTargets += $engineerRoot }
+if ("Site" -in $Roles) { $generatedTargets += $siteRoot }
+if ("Server" -in $Roles) { $generatedTargets += $serverRoot }
+$resolvedReleaseRoot = [System.IO.Path]::GetFullPath($releaseRoot).TrimEnd([System.IO.Path]::DirectorySeparatorChar)
 foreach ($target in $generatedTargets) {
+    $resolvedTarget = [System.IO.Path]::GetFullPath($target)
+    if (-not $resolvedTarget.StartsWith($resolvedReleaseRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Generated package directory is outside the release root: $resolvedTarget"
+    }
     if (Test-Path -LiteralPath $target) {
+        $runtimeFiles = @(Get-ChildItem -LiteralPath $target -Recurse -File -Force | Where-Object {
+            $_.Name -in @("identity.json", "site-profiles.json") -or $_.Extension -in @(".jsonl", ".db")
+        })
+        if ($runtimeFiles.Count -ne 0) {
+            throw "Package directory contains runtime data. Choose another OutputDirectory: $target"
+        }
         Remove-Item -LiteralPath $target -Recurse -Force
     }
 }
-New-Item -ItemType Directory -Force -Path (
-    $engineerRoot,
-    $siteRoot,
-    $linuxRoot,
-    (Join-Path $engineerRoot "docs"),
-    (Join-Path $siteRoot "docs"),
-    (Join-Path $engineerRoot "scripts/validation"),
-    (Join-Path $siteRoot "scripts/validation"),
-    (Join-Path $serverRoot "docs"),
-    $validationScriptsRoot,
-    $validationDocsRoot
-) | Out-Null
+foreach ($target in $generatedTargets) {
+    New-Item -ItemType Directory -Force -Path $target, (Join-Path $target "docs"), (Join-Path $target "scripts/validation") | Out-Null
+}
+if ("Server" -in $Roles) {
+    New-Item -ItemType Directory -Force -Path $linuxRoot, $validationDocsRoot | Out-Null
+}
 
 Push-Location $repository
 try {
@@ -132,18 +143,24 @@ try {
         # Wails desktop production tags are mandatory. Without them Wails
         # intentionally compiles app_default_windows.go, which only shows an
         # error dialog instructing the operator to use `wails build`.
-        go build -trimpath -tags "desktop,production" -ldflags "$linkerFlags -H windowsgui" -o (Join-Path $engineerRoot "RemLinkEngineer.exe") ./cmd/engineer
-        Assert-NativeSuccess "Engineer build"
-        go build -trimpath -ldflags $linkerFlags -o (Join-Path $siteRoot "RemLinkSite.exe") ./cmd/site
-        Assert-NativeSuccess "Site build"
-        & (Join-Path $repository "scripts/branding/Set-ExecutableIcon.ps1") -ExecutablePath (Join-Path $engineerRoot "RemLinkEngineer.exe") -IconPath (Join-Path $repository "frontend/branding/engineer.ico")
-        & (Join-Path $repository "scripts/branding/Set-ExecutableIcon.ps1") -ExecutablePath (Join-Path $siteRoot "RemLinkSite.exe") -IconPath (Join-Path $repository "frontend/branding/site.ico")
+        if ("Engineer" -in $Roles) {
+            go build -trimpath -tags "desktop,production" -ldflags "$linkerFlags -H windowsgui" -o (Join-Path $engineerRoot "RemLinkEngineer.exe") ./cmd/engineer
+            Assert-NativeSuccess "Engineer build"
+            & (Join-Path $repository "scripts/branding/Set-ExecutableIcon.ps1") -ExecutablePath (Join-Path $engineerRoot "RemLinkEngineer.exe") -IconPath (Join-Path $repository "frontend/branding/engineer.ico")
+        }
+        if ("Site" -in $Roles) {
+            go build -trimpath -ldflags $linkerFlags -o (Join-Path $siteRoot "RemLinkSite.exe") ./cmd/site
+            Assert-NativeSuccess "Site build"
+            & (Join-Path $repository "scripts/branding/Set-ExecutableIcon.ps1") -ExecutablePath (Join-Path $siteRoot "RemLinkSite.exe") -IconPath (Join-Path $repository "frontend/branding/site.ico")
+        }
 
         $env:GOOS = "linux"
         $env:GOARCH = "amd64"
         $env:CGO_ENABLED = "0"
-        go build -trimpath -ldflags $linkerFlags -o (Join-Path $linuxRoot "remlink-server") ./cmd/server
-        Assert-NativeSuccess "Server build"
+        if ("Server" -in $Roles) {
+            go build -trimpath -ldflags $linkerFlags -o (Join-Path $linuxRoot "remlink-server") ./cmd/server
+            Assert-NativeSuccess "Server build"
+        }
     } finally {
         $env:GOOS = $savedGOOS
         $env:GOARCH = $savedGOARCH
@@ -151,47 +168,45 @@ try {
     }
 
     # Engineer and Site are intentionally self-contained portable packages.
-    Copy-Item config/engineer.example.yaml (Join-Path $engineerRoot "engineer.yaml")
-    Copy-Item config/site.example.yaml (Join-Path $siteRoot "site.yaml")
-    Copy-Item frontend/branding/engineer.svg (Join-Path $engineerRoot "RemLinkEngineer.svg")
-    Copy-Item frontend/branding/engineer.ico (Join-Path $engineerRoot "RemLinkEngineer.ico")
-    Copy-Item frontend/branding/site.svg (Join-Path $siteRoot "RemLinkSite.svg")
-    Copy-Item frontend/branding/site.ico (Join-Path $siteRoot "RemLinkSite.ico")
-    Copy-Item THIRD_PARTY_NOTICES.md $engineerRoot
-    Copy-Item THIRD_PARTY_NOTICES.md $siteRoot
-    Copy-Item docs/packages/engineer-readme.md (Join-Path $engineerRoot "README.md")
-    Copy-Item docs/packages/site-readme.md (Join-Path $siteRoot "README.md")
-    Copy-Item docs/deployment-and-usage.md (Join-Path $engineerRoot "docs/deployment-and-usage.md")
-    Copy-Item docs/deployment-and-usage.md (Join-Path $siteRoot "docs/deployment-and-usage.md")
-    Copy-Item scripts/validation/Test-ReleasePackage.ps1 (Join-Path $engineerRoot "scripts/validation/Test-ReleasePackage.ps1")
-    Copy-Item scripts/validation/Test-ReleasePackage.ps1 (Join-Path $siteRoot "scripts/validation/Test-ReleasePackage.ps1")
+    foreach ($role in @("Engineer", "Site")) {
+        if ($role -notin $Roles) { continue }
+        $clientRoot = if ($role -eq "Engineer") { $engineerRoot } else { $siteRoot }
+        $clientRole = $role.ToLowerInvariant()
+        Copy-Item "config/$clientRole.example.yaml" (Join-Path $clientRoot "$clientRole.yaml")
+        Copy-Item "frontend/branding/$clientRole.svg" (Join-Path $clientRoot "RemLink$role.svg")
+        Copy-Item "frontend/branding/$clientRole.ico" (Join-Path $clientRoot "RemLink$role.ico")
+        Copy-Item THIRD_PARTY_NOTICES.md $clientRoot
+        Copy-Item "docs/packages/$clientRole-readme.md" (Join-Path $clientRoot "README.md")
+        Copy-Item docs/deployment-and-usage.md (Join-Path $clientRoot "docs/deployment-and-usage.md")
+        Copy-Item scripts/validation/Test-ReleasePackage.ps1 (Join-Path $clientRoot "scripts/validation/Test-ReleasePackage.ps1")
+        Write-PackageMetadata -Root $clientRoot -Role $role -Target "windows/amd64"
+    }
 
     # Server has its own native binary and Docker deployment context; it never
     # contains either Windows client executable.
-    Copy-Item config/server.example.yaml (Join-Path $linuxRoot "server.yaml")
-    Copy-Item THIRD_PARTY_NOTICES.md $linuxRoot
-    Copy-Item docs/packages/server-readme.md (Join-Path $serverRoot "README.md")
-    Copy-Item -Recurse -Force deploy/docker (Join-Path $serverRoot "docker")
-    foreach ($composeName in @("compose.release.yaml", "compose.image.yaml")) {
-        $composePath = Join-Path $serverRoot "docker/$composeName"
-        $composeText = [IO.File]::ReadAllText($composePath)
-        [IO.File]::WriteAllText($composePath, ($composeText -replace 'remlink/server:[0-9A-Za-z_.-]+', "remlink/server:$Version"), [Text.UTF8Encoding]::new($false))
+    if ("Server" -in $Roles) {
+        Copy-Item config/server.example.yaml (Join-Path $linuxRoot "server.yaml")
+        Copy-Item THIRD_PARTY_NOTICES.md $linuxRoot
+        Copy-Item docs/packages/server-readme.md (Join-Path $serverRoot "README.md")
+        Copy-Item -Recurse -Force deploy/docker (Join-Path $serverRoot "docker")
+        foreach ($composeName in @("compose.release.yaml", "compose.image.yaml")) {
+            $composePath = Join-Path $serverRoot "docker/$composeName"
+            $composeText = [IO.File]::ReadAllText($composePath)
+            [IO.File]::WriteAllText($composePath, ($composeText -replace 'remlink/server:[0-9A-Za-z_.-]+', "remlink/server:$Version"), [Text.UTF8Encoding]::new($false))
+        }
+        Copy-Item docs/deployment-and-usage.md (Join-Path $serverRoot "docs/deployment-and-usage.md")
+        Copy-Item scripts/validation/* $validationScriptsRoot
+        Copy-Item docs/validation/* $validationDocsRoot
+        Write-PackageMetadata -Root $serverRoot -Role Server -Target "linux/amd64"
     }
-    Copy-Item docs/deployment-and-usage.md (Join-Path $serverRoot "docs/deployment-and-usage.md")
-    Copy-Item scripts/validation/* $validationScriptsRoot
-    Copy-Item docs/validation/* $validationDocsRoot
 
-    Write-PackageMetadata -Root $engineerRoot -Role Engineer -Target "windows/amd64"
-    Write-PackageMetadata -Root $siteRoot -Role Site -Target "windows/amd64"
-    Write-PackageMetadata -Root $serverRoot -Role Server -Target "linux/amd64"
-
-    $engineerArchive = New-PackageArchive -Root $engineerRoot -Name $engineerName -Role Engineer
-    $siteArchive = New-PackageArchive -Root $siteRoot -Name $siteName -Role Site
-    $serverArchive = New-PackageArchive -Root $serverRoot -Name $serverName -Role Server
+    if ("Engineer" -in $Roles) { $engineerArchive = New-PackageArchive -Root $engineerRoot -Name $engineerName -Role Engineer }
+    if ("Site" -in $Roles) { $siteArchive = New-PackageArchive -Root $siteRoot -Name $siteName -Role Site }
+    if ("Server" -in $Roles) { $serverArchive = New-PackageArchive -Root $serverRoot -Name $serverName -Role Server }
 } finally {
     Pop-Location
 }
 
-Write-Host "Engineer package: $engineerArchive"
-Write-Host "Site package: $siteArchive"
-Write-Host "Server package: $serverArchive"
+if ("Engineer" -in $Roles) { Write-Host "Engineer package: $engineerArchive" }
+if ("Site" -in $Roles) { Write-Host "Site package: $siteArchive" }
+if ("Server" -in $Roles) { Write-Host "Server package: $serverArchive" }

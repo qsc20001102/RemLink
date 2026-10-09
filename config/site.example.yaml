@@ -7,6 +7,7 @@ netstack:
   udp_flow_limit: 4096
   udp_idle_seconds: 60
 
-# Join Token 只用于首次注册；可以从 Server 查询后直接填写在上面。
+# Join Token 用于首次注册、切换 Server 或同步改名；填写对应 Server 的有效令牌。
+# 修改 YAML 后重启生效，程序自动同步 identity.json，无需手动删除。
 # NodeID、NodeToken 和 WireGuard 私钥仍由程序管理并使用 DPAPI 保护。
 # Site LAN CIDR 由 Engineer Session 动态下发。

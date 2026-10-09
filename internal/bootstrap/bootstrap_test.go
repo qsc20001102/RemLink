@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -331,7 +332,7 @@ func TestEnrollPersistsIdentityAndUsesConfigOnRestart(t *testing.T) {
 	}
 }
 
-func TestEnrollRebindsOnlyUnregisteredPortableIdentity(t *testing.T) {
+func TestEnrollRebindsDraftAndRequiresJoinTokenForRegisteredServerChange(t *testing.T) {
 	service, _, joins, _ := testService(t)
 	server := httptest.NewServer(Handler(service))
 	defer server.Close()
@@ -367,8 +368,184 @@ func TestEnrollRebindsOnlyUnregisteredPortableIdentity(t *testing.T) {
 	config.ServerURL = "http://192.0.2.2:8080"
 	config.JoinToken = ""
 	if _, _, err := Enroll(context.Background(), identityStore, client, config); err == nil ||
-		!strings.Contains(err.Error(), "已注册的 Node 身份") {
+		!strings.Contains(err.Error(), "Join Token") {
 		t.Fatalf("registered identity Server change error = %v", err)
+	}
+	unchanged, err := identityStore.Load()
+	if err != nil || unchanged.ServerURL != registered.ServerURL || unchanged.NodeToken != registered.NodeToken {
+		t.Fatal("server switch without Join Token changed the registered identity")
+	}
+}
+
+func TestEnrollSyncsYAMLNameWhileOfflineForBothRoles(t *testing.T) {
+	for _, role := range []model.NodeType{model.NodeTypeEngineer, model.NodeTypeSite} {
+		t.Run(string(role), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}))
+			defer server.Close()
+			client, _ := NewClient(server.URL, server.Client())
+			store, _ := identity.NewStore(filepath.Join(t.TempDir(), "identity.json"), xorProtector{})
+			original, _ := identity.New(role, "Old name", server.URL)
+			original.NodeToken = "existing-node-token"
+			original.ConfigVersion = 7
+			original.OwnedRoutes = []string{"192.168.13.0/24"}
+			if err := store.Save(original); err != nil {
+				t.Fatal(err)
+			}
+			_, _, err := Enroll(context.Background(), store, client, EnrollConfig{
+				NodeType: role, NodeName: "New name", ServerURL: server.URL + "/",
+			})
+			if err == nil {
+				t.Fatal("offline bootstrap succeeded")
+			}
+			updated, err := store.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if updated.NodeName != "New name" || updated.NodeID != original.NodeID ||
+				updated.PrivateKey != original.PrivateKey || updated.NodeToken != original.NodeToken ||
+				updated.ConfigVersion != 7 || len(updated.OwnedRoutes) != 1 {
+				t.Fatal("YAML name was not synced or durable identity data changed")
+			}
+		})
+	}
+}
+
+func TestEnrollSwitchesRegisteredServerForBothRoles(t *testing.T) {
+	for _, role := range []model.NodeType{model.NodeTypeEngineer, model.NodeTypeSite} {
+		t.Run(string(role), func(t *testing.T) {
+			oldService, _, oldJoins, _ := testService(t)
+			oldServer := httptest.NewServer(Handler(oldService))
+			defer oldServer.Close()
+			oldClient, _ := NewClient(oldServer.URL, oldServer.Client())
+			store, _ := identity.NewStore(filepath.Join(t.TempDir(), "identity.json"), xorProtector{})
+			oldJoin, _ := oldJoins.Ensure(context.Background())
+			config := EnrollConfig{NodeType: role, NodeName: "Original", ServerURL: oldServer.URL, JoinToken: oldJoin}
+			original, _, err := Enroll(context.Background(), store, oldClient, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			original.OwnedRoutes = []string{"192.168.13.0/24"}
+			if err := store.Save(original); err != nil {
+				t.Fatal(err)
+			}
+
+			newService, newDatabase, newJoins, _ := testService(t)
+			newHandler := Handler(newService)
+			requests := make(chan string, 2)
+			newServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests <- r.URL.Path
+				newHandler.ServeHTTP(w, r)
+			}))
+			defer newServer.Close()
+			newClient, _ := NewClient(newServer.URL, newServer.Client())
+			newJoin, _ := newJoins.Ensure(context.Background())
+			config.ServerURL, config.NodeName, config.JoinToken = newServer.URL, "Updated", newJoin
+			updated, _, err := Enroll(context.Background(), store, newClient, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if path := <-requests; path != "/api/v1/bootstrap/register" {
+				t.Fatalf("server switch sent credentials via %s", path)
+			}
+			loaded, err := store.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loaded.ServerURL != newServer.URL || loaded.NodeName != "Updated" ||
+				loaded.NodeID != original.NodeID || loaded.PrivateKey != original.PrivateKey ||
+				loaded.NodeToken == original.NodeToken || loaded.NodeToken != updated.NodeToken ||
+				len(loaded.OwnedRoutes) != 1 || loaded.OwnedRoutes[0] != original.OwnedRoutes[0] {
+				t.Fatal("server switch did not persist the expected identity and route ownership")
+			}
+			node, err := newDatabase.GetNode(context.Background(), original.NodeID)
+			if err != nil || node.Name != "Updated" {
+				t.Fatal("new server did not register the configured name")
+			}
+			config.JoinToken = ""
+			restarted, _, err := Enroll(context.Background(), store, newClient, config)
+			if err != nil || restarted.NodeToken != updated.NodeToken {
+				t.Fatal("restart did not reuse the new Node Token")
+			}
+			if path := <-requests; path != "/api/v1/bootstrap/config" {
+				t.Fatalf("restart called %s", path)
+			}
+		})
+	}
+}
+
+func TestEnrollRetriesConfiguredNameUpdateWithoutChangingNodeOrIP(t *testing.T) {
+	for _, role := range []model.NodeType{model.NodeTypeEngineer, model.NodeTypeSite} {
+		t.Run(string(role), func(t *testing.T) {
+			service, databaseStore, joins, _ := testService(t)
+			server := httptest.NewServer(Handler(service))
+			defer server.Close()
+			client, _ := NewClient(server.URL, server.Client())
+			store, _ := identity.NewStore(filepath.Join(t.TempDir(), "identity.json"), xorProtector{})
+			join, _ := joins.Ensure(context.Background())
+			config := EnrollConfig{NodeType: role, NodeName: "Old name", ServerURL: server.URL, JoinToken: join}
+			original, network, err := Enroll(context.Background(), store, client, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			config.NodeName, config.JoinToken = "New name", "invalid-join-token"
+			if _, _, err := Enroll(context.Background(), store, client, config); err == nil {
+				t.Fatal("invalid rename token accepted")
+			}
+			pending, err := store.Load()
+			if err != nil || pending.NodeName != "New name" || pending.RegisteredNodeName != "Old name" || pending.NodeToken != original.NodeToken {
+				t.Fatal("failed name update lost the configured name, pending rename, or original credentials")
+			}
+			// A pending rename must not prevent normal reconnects without a Join Token.
+			config.JoinToken = ""
+			if _, _, err := Enroll(context.Background(), store, client, config); err != nil {
+				t.Fatal(err)
+			}
+			config.JoinToken = join
+			updated, updatedNetwork, err := Enroll(context.Background(), store, client, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			node, err := databaseStore.GetNode(context.Background(), original.NodeID)
+			if err != nil || node.Name != "New name" || updated.RegisteredNodeName != "New name" ||
+				updated.NodeID != original.NodeID || updated.PrivateKey != original.PrivateKey ||
+				updatedNetwork.OverlayIP != network.OverlayIP {
+				t.Fatal("rename did not update server metadata while preserving the node and Overlay IP")
+			}
+		})
+	}
+}
+
+func TestEnrollFailedServerSwitchPreservesPreviousIdentity(t *testing.T) {
+	service, _, joins, _ := testService(t)
+	server := httptest.NewServer(Handler(service))
+	defer server.Close()
+	client, _ := NewClient(server.URL, server.Client())
+	store, _ := identity.NewStore(filepath.Join(t.TempDir(), "identity.json"), xorProtector{})
+	join, _ := joins.Ensure(context.Background())
+	config := EnrollConfig{NodeType: model.NodeTypeEngineer, NodeName: "Original", ServerURL: server.URL, JoinToken: join}
+	if _, _, err := Enroll(context.Background(), store, client, config); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	newService, _, _, _ := testService(t)
+	newServer := httptest.NewServer(Handler(newService))
+	defer newServer.Close()
+	newClient, _ := NewClient(newServer.URL, newServer.Client())
+	config.ServerURL, config.NodeName, config.JoinToken = newServer.URL, "Changed", "invalid-join-token"
+	if _, _, err := Enroll(context.Background(), store, newClient, config); !errors.Is(err, ErrJoinTokenInvalid) {
+		var apiError *ClientError
+		if !errors.As(err, &apiError) || apiError.Code != "JOIN_TOKEN_INVALID" {
+			t.Fatalf("unexpected switch result: %v", err)
+		}
+	}
+	after, err := os.ReadFile(store.Path())
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("failed switch overwrote the previous identity")
 	}
 }
 

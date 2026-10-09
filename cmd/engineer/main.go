@@ -39,7 +39,7 @@ func run(arguments []string) error {
 	}
 	flags := flag.NewFlagSet("remlink-engineer", flag.ContinueOnError)
 	configPath := flags.String("config", defaultConfigPath, "Engineer YAML configuration path")
-	joinToken := flags.String("join-token", os.Getenv(joinTokenEnvironment), "first-registration Join Token (CLI/environment override YAML)")
+	joinToken := flags.String("join-token", os.Getenv(joinTokenEnvironment), "registration/reconfiguration Join Token (CLI/environment override YAML)")
 	identityPath := flags.String("identity", "", "override DPAPI identity path")
 	if err := flags.Parse(arguments); err != nil {
 		return err

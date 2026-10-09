@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Icon from './Icon.vue'
 import SessionPanel from './components/SessionPanel.vue'
 import LogPanel from './components/LogPanel.vue'
+import SubnetCalculator from './components/SubnetCalculator.vue'
 import { formatTime } from './format'
 import engineerMark from '../../branding/engineer.svg'
 import siteMark from '../../branding/site.svg'
@@ -12,9 +13,11 @@ import { errorLabel, statusLabel } from './zh-cn'
 
 const state = ref<EngineerState | null>(null)
 const page = ref<'connection' | 'session' | 'logs' | 'settings'>('connection')
+const logsExpanded = ref(false)
 const selectedSiteID = ref('')
 const cidrs = ref<string[]>([])
 const cidrInput = ref('')
+const subnetCalculator = ref<InstanceType<typeof SubnetCalculator> | null>(null)
 const busy = ref(false)
 const error = ref('')
 const siteQuery = ref('')
@@ -103,6 +106,9 @@ async function persistCurrentProfile() {
   }
 }
 function siteCIDRCount(siteID: string) { return state.value?.siteCIDRs[siteID]?.length ?? 0 }
+function applyCalculatedSubnet(value: string) {
+  if (!editLocked.value) cidrInput.value = value
+}
 async function loadSelectedSiteProfile() {
   if (sessionBusy.value) return
   cidrInput.value = ''
@@ -144,7 +150,7 @@ watch(selectedSiteID, () => { void loadSelectedSiteProfile() })
 </script>
 
 <template>
-  <div v-if="state" class="app-shell">
+  <div v-if="state" class="app-shell" :class="{ 'logs-expanded': logsExpanded }">
     <aside class="sidebar">
       <div class="brand"><img class="app-mark" :src="engineerMark" alt="" /><div>RemLink<small>Engineer 工作台</small></div></div>
       <nav aria-label="主导航">
@@ -196,7 +202,7 @@ watch(selectedSiteID, () => { void loadSelectedSiteProfile() })
               <div class="panel-heading"><h2 id="cidr-title">远程网段</h2><span class="selected-site-label" :title="selectedSite?.name">{{ selectedSite?.name || '请先选择现场' }}</span></div>
               <div class="cidr-body">
                 <p class="profile-hint">每个现场独立保存，切换时自动加载。</p>
-                <label for="cidr">远程 IPv4 网段（CIDR）</label>
+                <div class="cidr-label-row"><label for="cidr">远程 IPv4 网段（CIDR）</label><button type="button" class="text-action" @click="subnetCalculator?.open()">网段计算器</button></div>
                 <form @submit.prevent="addCIDR"><input id="cidr" v-model="cidrInput" placeholder="例如 192.168.13.0/24" :disabled="editLocked" autocomplete="off" spellcheck="false"/><button type="submit" class="secondary" :disabled="editLocked || !cidrInput.trim()"><Icon name="plus"/>添加</button></form>
                 <div class="cidr-list">
                   <div v-for="cidr in cidrs" :key="cidr"><Icon name="link"/><code>{{ cidr }}</code><button class="icon-button" :disabled="editLocked" @click="removeCIDR(cidr)" :aria-label="`删除 ${cidr}`"><Icon name="close"/></button></div>
@@ -210,7 +216,7 @@ watch(selectedSiteID, () => { void loadSelectedSiteProfile() })
         </template>
 
         <SessionPanel v-if="page === 'connection' || page === 'session'" :session="state.session" :busy="busy" @disconnect="disconnect"/>
-        <LogPanel v-show="page === 'connection' || page === 'logs'" :logs="state.logs" :expanded="page === 'logs'" :visible="page === 'connection' || page === 'logs'" @expand="page = 'logs'"/>
+        <LogPanel v-show="page === 'logs'" :logs="state.logs" :expanded="true" :visible="page === 'logs'"/>
 
         <section v-if="page === 'settings'" class="panel settings-panel" aria-labelledby="settings-title">
           <div class="panel-heading"><h2 id="settings-title">运行配置</h2><span class="badge neutral">只读</span></div>
@@ -218,7 +224,9 @@ watch(selectedSiteID, () => { void loadSelectedSiteProfile() })
           <div class="settings-note"><Icon name="settings"/><div><b>由本机配置与 Server Bootstrap 管理</b><p>网络地址、密钥与 Node Token 不在界面中复制或明文保存；Overlay 变更由 Server 触发重新 Bootstrap。</p></div></div>
         </section>
       </div>
+      <div class="logs-dock"><LogPanel :logs="state.logs" :expanded="logsExpanded" :visible="true" :docked="true" @toggle="logsExpanded = !logsExpanded" /></div>
     </main>
+    <SubnetCalculator ref="subnetCalculator" :can-apply="!editLocked" @apply="applyCalculatedSubnet" />
   </div>
   <div v-else class="loading" role="status"><img :src="engineerMark" alt=""/><h1>RemLink Engineer</h1><p>{{ error || '正在启动工作台…' }}</p></div>
 </template>

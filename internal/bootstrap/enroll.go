@@ -18,8 +18,8 @@ import (
 	"remlink/internal/model"
 )
 
-// EnrollConfig contains first-run inputs which are deliberately not persisted
-// as plaintext secrets. JoinToken is used only if identity has no NodeToken.
+// EnrollConfig contains YAML inputs without persisting plaintext secrets.
+// JoinToken is used for initial registration, a server switch, or a name update.
 type EnrollConfig struct {
 	NodeType  model.NodeType
 	NodeName  string
@@ -32,6 +32,7 @@ type EnrollConfig struct {
 // Enroll loads or creates an identity, calls register/config, validates the
 // authoritative NetworkConfig, and persists the latest token/version.
 func Enroll(ctx context.Context, store *identity.Store, client *Client, config EnrollConfig) (identity.Identity, NetworkConfig, error) {
+	config.JoinToken = strings.TrimSpace(config.JoinToken)
 	current, err := store.Load()
 	if errors.Is(err, os.ErrNotExist) {
 		current, err = identity.New(config.NodeType, config.NodeName, config.ServerURL)
@@ -48,23 +49,35 @@ func Enroll(ctx context.Context, store *identity.Store, client *Client, config E
 		return identity.Identity{}, NetworkConfig{}, errors.New("persisted Node type does not match this executable")
 	}
 	configuredServerURL := strings.TrimRight(strings.TrimSpace(config.ServerURL), "/")
-	if configuredServerURL != current.ServerURL {
-		// A first launch may create identity.json before the operator has filled
-		// in the real Server URL and Join Token. Until registration succeeds the
-		// identity has no server-side credentials or owned routes, so rebinding
-		// that local draft identity is safe and makes portable packages editable.
-		if current.NodeToken == "" && current.ConfigVersion == 0 && len(current.OwnedRoutes) == 0 {
-			current.ServerURL = configuredServerURL
-			if err := store.Save(current); err != nil {
-				return identity.Identity{}, NetworkConfig{}, fmt.Errorf("update unregistered Node identity Server URL: %w", err)
-			}
-		} else {
-			return identity.Identity{}, NetworkConfig{}, errors.New("配置的 Server URL 与已注册的 Node 身份不一致；如需切换 Server，请退出程序后删除 identity.json 并重新注册")
+	serverChanged := configuredServerURL != current.ServerURL
+	registeredServerChanged := serverChanged && current.NodeToken != ""
+	if registeredServerChanged && strings.TrimSpace(config.JoinToken) == "" {
+		return identity.Identity{}, NetworkConfig{}, errors.New("切换 Server 需要新服务器的 Join Token，请填写 YAML 中的 join_token 后重启，无需删除 identity.json")
+	}
+	nameChanged := current.NodeName != strings.TrimSpace(config.NodeName)
+	current.NodeName = strings.TrimSpace(config.NodeName)
+	if serverChanged {
+		current.ServerURL = configuredServerURL
+		// Reuse the existing registration endpoint without sending the old
+		// server's NodeToken to the new address. Keep NodeID, key and owned
+		// routes so the normal startup reconciliation can clean stale routes.
+		current.NodeToken = ""
+		current.ConfigVersion = 0
+		current.RegisteredNodeName = ""
+	}
+	if err := current.Validate(false); err != nil {
+		return identity.Identity{}, NetworkConfig{}, err
+	}
+	// Local name edits and draft URL edits take effect even while offline.
+	// A registered server switch is committed only after successful enrollment,
+	// leaving the previous credentials usable if the new registration fails.
+	if (nameChanged || serverChanged) && !registeredServerChanged {
+		if err := store.Save(current); err != nil {
+			return identity.Identity{}, NetworkConfig{}, fmt.Errorf("sync Node identity with YAML: %w", err)
 		}
 	}
-	current.NodeName = strings.TrimSpace(config.NodeName)
 	var network NetworkConfig
-	if current.NodeToken == "" {
+	if current.NodeToken == "" || (current.NodeName != current.RegisteredNodeName && config.JoinToken != "") {
 		if config.JoinToken == "" {
 			return identity.Identity{}, NetworkConfig{}, errors.New("Join Token is required for first registration")
 		}
@@ -77,6 +90,7 @@ func Enroll(ctx context.Context, store *identity.Store, client *Client, config E
 			return identity.Identity{}, NetworkConfig{}, err
 		}
 		current.NodeToken = response.NodeToken
+		current.RegisteredNodeName = current.NodeName
 		network = response.Network
 	} else {
 		response, err := client.Config(ctx, ConfigRequest{NodeID: current.NodeID, NodeToken: current.NodeToken})

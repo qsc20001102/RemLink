@@ -159,7 +159,7 @@ netstack:
   udp_idle_seconds: 60
 ```
 
-`server` 只允许 HTTP/HTTPS 根地址，不带额外路径、查询参数或用户名密码。Site 配置不填写现场 CIDR；它由 Engineer 在创建会话时下发。首次注册令牌优先级为 `-join-token`、`REMLINK_JOIN_TOKEN`、YAML `join_token`。
+`server` 只允许 HTTP/HTTPS 根地址，不带额外路径、查询参数或用户名密码。Site 配置不填写现场 CIDR；它由 Engineer 在创建会话时下发。注册及重新配置时的 Join Token 优先级为 `-join-token`、`REMLINK_JOIN_TOKEN`、YAML `join_token`。
 
 以管理员身份在各自目录运行：
 
@@ -174,11 +174,13 @@ Site 控制台会显示 `OverlayIP`、`WireGuard=已连接`、`Control=已连接
 
 | 运行文件 | 作用 |
 | --- | --- |
-| `engineer.yaml` / `site.yaml` | 当前角色配置，Join Token 是明文首次注册便捷项 |
+| `engineer.yaml` / `site.yaml` | 当前角色配置，Join Token 是明文注册及重新配置便捷项 |
 | `identity.json` | DPAPI 保护的节点身份，只能在生成它的 Windows 主机使用 |
 | `logs/engineer.jsonl` / `logs/site.jsonl` | 角色日志 |
 | `wintun.dll` | 内嵌固定版本运行库，首次释放并校验摘要 |
 | `site-profiles.json` | 仅 Engineer 使用，按 Site NodeID 保存远程 CIDR |
+
+修改 Engineer 或 Site 的 YAML 后，退出程序并重新启动即可生效，无需删除 `identity.json`。`node_name` 会立即同步本地身份；提供当前 Server 的有效 `join_token` 后，还会同步服务器显示名称。切换 `server` 时填写新 Server 的有效 `join_token`，程序复用节点 ID 和 WireGuard 密钥自动注册，成功后更新身份文件；注册失败会保留原身份。路由清理记录会保留，Site 的 `netstack` 参数在每次启动时直接从 YAML 读取。
 
 Engineer 使用交互式 GUI。Site 如需开机启动，可在前台完成注册后，用 Windows 计划任务以最高权限运行 Site EXE，并指定配置文件和工作目录；不要与前台进程同时运行。
 
@@ -186,7 +188,7 @@ Engineer 使用交互式 GUI。Site 如需开机启动，可在前台完成注�
 
 1. 在 Site 本机验证目标可达，例如 `ping 192.168.13.10` 或 `Test-NetConnection 192.168.13.10 -Port 502`。
 2. 在 Engineer 确认服务器和 Control 在线，选择就绪的 Site。
-3. 添加一个或多个远程 CIDR，例如 `192.168.13.0/24`。本地冲突检查必须通过。
+3. 添加一个或多个远程 CIDR，例如 `192.168.13.0/24`。不知道网段时，点击“网段计算器”，输入目标设备的 IP（如 `192.168.13.10`）及子网掩码（如 `255.255.255.0`），计算并填入后点击“添加”。本地冲突检查必须通过。
 4. 点击连接，等待会话到 `ACTIVE` 后再用原生工具访问现场目标。
 5. 完成后断开会话。切换 Site 前先关闭当前会话。
 

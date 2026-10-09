@@ -50,6 +50,10 @@ go vet ./...
 
 ## 打包
 
+在源码根目录双击 `build-all.bat` 即可一键构建并压缩三端，版本保持 `1.0.8`。脚本使用 PowerShell 7，需要 Git、Go 和 Node.js/npm；它会执行现有发布脚本的检查、构建与 ZIP 解压校验，完成或失败后保留窗口显示结果。
+
+每次运行输出到独立目录 `dist/releases/v1.0.8-时间戳/`，包含 Engineer、Site、Server 三个 ZIP 及对应发布目录，不会覆盖之前的包或运行身份。该 BAT 在本机打包，不执行远程部署。命令行或自动化环境可使用 `build-all.bat --no-pause`。
+
 生成三个独立发布 ZIP：
 
 ```powershell
@@ -65,6 +69,14 @@ RemLink-Server-v1.0.8-linux-amd64.zip
 ```
 
 版本可通过 `-Version` 修改，输出位置可通过 `-OutputDirectory` 修改。每个发布目录包含 `BUILD-INFO.json` 和 `SHA256SUMS.txt`。Engineer 构建使用 Wails 必需的 `desktop,production` 标签。
+
+只生成 Engineer 和 Site 的未压缩目录：
+
+```powershell
+./scripts/build-release.ps1 -Version 1.0.8 -Roles Engineer,Site -SkipArchive -OutputDirectory dist/optimized-v1.0.8
+```
+
+输出目录若含身份、现场网段或日志等运行数据，脚本会停止，需改用其他输出目录。
 
 生成供服务器构建的 Docker 上下文 TAR：
 
