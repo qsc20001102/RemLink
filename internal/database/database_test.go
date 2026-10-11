@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/netip"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -66,8 +67,8 @@ func TestOpenMigratesAndReopens(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 1 {
-		t.Fatalf("migration count = %d, want 1", migrationCount)
+	if migrationCount != 2 {
+		t.Fatalf("migration count = %d, want 2", migrationCount)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
@@ -81,8 +82,8 @@ func TestOpenMigratesAndReopens(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 1 {
-		t.Fatalf("migration count after reopen = %d, want 1", migrationCount)
+	if migrationCount != 2 {
+		t.Fatalf("migration count after reopen = %d, want 2", migrationCount)
 	}
 }
 
@@ -206,6 +207,154 @@ func TestForeignKeysEnabled(t *testing.T) {
 	}
 }
 
+func TestSessionHistorySurvivesNodeRevocationAndReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.db")
+	ctx := context.Background()
+	db, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	store := NewStore(db)
+	createSessionTestNodes(t, store)
+	for index, status := range []model.SessionStatus{model.SessionClosed, model.SessionFailed} {
+		id := uint64(index + 1)
+		if err := store.CreateSession(ctx, model.Session{
+			ID: id, EngineerNodeID: "engineer", SiteNodeID: "site", Status: model.SessionCreating,
+			CIDRs: []netip.Prefix{netip.MustParsePrefix("192.168.13.0/24")},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.UpdateSessionStatus(ctx, id, status, ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.UpdateSessionStats(ctx, id, model.SessionCounters{UploadBytes: 1234, DownloadBytes: 5678}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := store.ListSessionsFiltered(ctx, SessionFilter{Kind: "history"})
+	if err != nil || len(before) != 2 {
+		t.Fatalf("history before revocation = %+v, %v", before, err)
+	}
+	for _, nodeID := range []string{"site", "engineer"} {
+		if err := store.DeleteNode(ctx, nodeID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.GetNode(ctx, nodeID); !errors.Is(err, ErrNodeNotFound) {
+			t.Fatalf("revoked Node %s is still registered: %v", nodeID, err)
+		}
+		after, err := store.ListSessionsFiltered(ctx, SessionFilter{Kind: "history"})
+		if err != nil || !reflect.DeepEqual(before, after) {
+			t.Fatalf("revoking %s changed history: before=%+v after=%+v error=%v", nodeID, before, after, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := NewStore(db).ListSessionsFiltered(ctx, SessionFilter{Kind: "history", EngineerNodeID: "engineer", SiteNodeID: "site"})
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatalf("history after reopening = %+v, %v", after, err)
+	}
+}
+
+func TestSessionHistoryMigrationPreservesExistingRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	db.SetMaxOpenConns(1)
+	if _, err := db.ExecContext(ctx, `CREATE TABLE schema_migrations (
+		version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := migrationFiles.ReadFile("migrations/0001_initial.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := applyMigration(ctx, db, 1, "0001_initial.sql", string(initial)); err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(db)
+	createSessionTestNodes(t, store)
+	id := uint64(math.MaxUint64 - 1)
+	if err := store.CreateSession(ctx, model.Session{
+		ID: id, EngineerNodeID: "engineer", SiteNodeID: "site", Status: model.SessionCreating,
+		CreatedAt: time.Now().Add(-30 * 24 * time.Hour).UTC(),
+		CIDRs:     []netip.Prefix{netip.MustParsePrefix("192.168.13.0/24"), netip.MustParsePrefix("172.20.0.0/16")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateSessionStatus(ctx, id, model.SessionActive, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateSessionStats(ctx, id, model.SessionCounters{UploadBytes: 1234, DownloadBytes: 5678, UploadPackets: 12, DownloadPackets: 34}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateSessionStatus(ctx, id, model.SessionFailed, "SITE_OFFLINE"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendEvent(ctx, model.EventLog{Module: "SESSION", Level: "INFO", SessionID: id, Message: "retained event"}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.GetSession(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store = NewStore(db)
+	after, err := store.GetSession(ctx, id)
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatalf("migration changed Session: before=%+v after=%+v error=%v", before, after, err)
+	}
+	events, err := store.ListEvents(ctx, model.EventLogFilter{SessionID: id})
+	if err != nil || len(events) != 1 || events[0].Message != "retained event" {
+		t.Fatalf("migration changed events: %+v, %v", events, err)
+	}
+	rows, err := db.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows.Next() {
+		rows.Close()
+		t.Fatal("migration left invalid foreign keys")
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatal(err)
+	}
+	rows.Close()
+	if err := store.DeleteNode(ctx, "site"); err != nil {
+		t.Fatal(err)
+	}
+	after, err = store.GetSession(ctx, id)
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatalf("revocation after migration changed history: %+v, %v", after, err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO session_cidrs(session_id, cidr) VALUES('missing', '192.168.1.0/24')`); err == nil {
+		t.Fatal("migration removed the Session CIDR foreign key")
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO session_stats(session_id, updated_at) VALUES('missing', '2026-10-11T00:00:00Z')`); err == nil {
+		t.Fatal("migration removed the Session stats foreign key")
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE sessions SET site_node_id = 'missing' WHERE session_id = ?`, fmt.Sprint(id)); err == nil {
+		t.Fatal("migration allowed changing a Session participant to an unregistered Node")
+	}
+}
+
 func TestEventRepositoryFiltersByTimeAndNormalizesModule(t *testing.T) {
 	store := NewStore(openTestDB(t))
 	ctx := context.Background()
@@ -221,6 +370,41 @@ func TestEventRepositoryFiltersByTimeAndNormalizesModule(t *testing.T) {
 	}
 	if err := store.AppendEvent(ctx, model.EventLog{Level: "INFO", Module: "CUSTOM", Message: "outside taxonomy"}); err == nil {
 		t.Fatal("AppendEvent accepted a twelfth logging module")
+	}
+}
+
+func TestEventNamesSurviveDeviceRenameAndRevocation(t *testing.T) {
+	store := NewStore(openTestDB(t))
+	ctx := context.Background()
+	createSessionTestNodes(t, store)
+	if err := store.CreateSession(ctx, model.Session{ID: 42, EngineerNodeID: "engineer", SiteNodeID: "site", Status: model.SessionCreating, CIDRs: []netip.Prefix{netip.MustParsePrefix("192.168.13.0/24")}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendEvent(ctx, model.EventLog{Module: "SESSION", Level: "INFO", SessionID: 42, Message: "会话状态变更为 活动中（ACTIVE）"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateNodeName(ctx, "engineer", "renamed-engineer"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteNode(ctx, "site"); err != nil {
+		t.Fatal(err)
+	}
+	events, err := store.ListEvents(ctx, model.EventLogFilter{SessionID: 42})
+	if err != nil || len(events) != 1 {
+		t.Fatalf("events = %+v, %v", events, err)
+	}
+	var fields map[string]string
+	if err := json.Unmarshal(events[0].FieldsJSON, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if fields["engineer_name"] != "Engineer" || fields["site_name"] != "Site" || fields["engineer_node_id"] != "engineer" {
+		t.Fatal("event-time names were lost after device changes")
+	}
+	for _, participant := range []string{"engineer", "site"} {
+		matched, err := store.ListEvents(ctx, model.EventLogFilter{NodeID: participant})
+		if err != nil || len(matched) != 1 {
+			t.Fatalf("device filter excluded its connection event: participant=%s count=%d error=%v", participant, len(matched), err)
+		}
 	}
 }
 

@@ -12,6 +12,9 @@ const moduleLabels: Record<string, string> = {
   TUN: '虚拟网卡（TUN）', SUBNET: '远程网段（SUBNET）', SYSTEM: '系统（SYSTEM）',
 }
 const reasonLabels: Record<string, string> = {
+  ENGINEER_OPERATOR: '工程师主动断开', SITE_OPERATOR: '现场端主动断开', ADMIN_DISCONNECT: '管理员断开',
+  NODE_REVOKED: '设备已撤销', NODE_RUNTIME_REBUILT: '设备已重启', NETWORK_CONFIG_CHANGED: '网络配置已更改',
+  NODE_OVERLAY_IP_CHANGED: '设备网络地址已更改', SERVER_UNREACHABLE: '无法连接服务器',
   SITE_NO_ROUTE: '现场端没有通往远程网段的明确路由（SITE_NO_ROUTE）',
   SESSION_TIMEOUT: '会话建立超时（SESSION_TIMEOUT）',
   SITE_OFFLINE: '现场端离线（SITE_OFFLINE）',

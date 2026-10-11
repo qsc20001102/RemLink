@@ -60,8 +60,11 @@ if ($releaseDockerfile -notmatch 'COPY linux-amd64/remlink-server' -or $releaseD
 }
 $identityPathSource = Get-Content -Raw (Join-Path $repository 'internal/identity/path_windows.go')
 $wintunRuntimeSource = Get-Content -Raw (Join-Path $repository 'internal/platform/windows/wintunruntime/runtime_windows.go')
-if (($identityPathSource + $wintunRuntimeSource) -match 'ProgramData') {
-    $violations += 'Portable Windows identity or Wintun runtime still depends on ProgramData'
+if ($identityPathSource -notmatch 'FOLDERID_ProgramData' -or $identityPathSource -match 'appdir\.Executable') {
+    $violations += 'Windows Node identity is not stored in a stable machine-local directory'
+}
+if ($wintunRuntimeSource -match 'ProgramData') {
+    $violations += 'Wintun runtime is not stored beside the executable'
 }
 $releaseScript = Get-Content -Raw (Join-Path $repository 'scripts/build-release.ps1')
 foreach ($packageName in @('RemLink-Engineer-v', 'RemLink-Site-v', 'RemLink-Server-v')) {
@@ -75,6 +78,7 @@ if ($releaseScript -match '\$windowsRoot') {
 if ($releaseScript -notmatch 'go build[^\r\n]+-tags\s+"desktop,production"[^\r\n]+RemLinkEngineer\.exe') {
     $violations += 'Engineer release build does not use the mandatory Wails desktop,production tags'
 }
+if ($releaseScript -notmatch 'go build[^\r\n]+-tags\s+"desktop,production"[^\r\n]+RemLinkSite\.exe') { $violations += 'Site release build does not use the mandatory Wails desktop,production tags' }
 foreach ($dockerfileEntry in @{
     'deploy/docker/Dockerfile' = $dockerfile
     'deploy/docker/Dockerfile.release' = $releaseDockerfile

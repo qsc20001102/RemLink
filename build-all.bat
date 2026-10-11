@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
 chcp 65001 >nul
-set "REMLINK_BUILD_VERSION=1.0.8"
+set "REMLINK_BUILD_VERSION=1.1.0"
 set "REMLINK_BUILD_STATUS=1"
 set "REMLINK_BUILD_PWSH="
 
@@ -19,14 +19,14 @@ if not defined REMLINK_BUILD_PWSH (
   goto restore_directory
 )
 
-echo RemLink v%REMLINK_BUILD_VERSION% - Build and ZIP Engineer, Site and Server
+echo RemLink v%REMLINK_BUILD_VERSION% - Engineer/Site ZIP, Server Docker image TAR.GZ
 echo Output: dist\releases\v%REMLINK_BUILD_VERSION%-TIMESTAMP
 echo.
 "%REMLINK_BUILD_PWSH%" -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'Stop'; try { if ($PSVersionTable.PSVersion.Major -lt 7) { throw 'PowerShell 7 or newer is required.' }; foreach ($toolName in @('git', 'go', 'node', 'npm')) { if (-not (Get-Command $toolName -ErrorAction SilentlyContinue)) { throw ('Required build tool is missing: ' + $toolName) } }; $outputDirectory = Join-Path 'dist/releases' ('v' + $env:REMLINK_BUILD_VERSION + '-' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff')); Write-Host ('Release output: ' + [IO.Path]::GetFullPath($outputDirectory)); & './scripts/build-release.ps1' -Version $env:REMLINK_BUILD_VERSION -OutputDirectory $outputDirectory; if (-not $?) { exit 1 }; exit 0 } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }"
 set "REMLINK_BUILD_STATUS=%ERRORLEVEL%"
 if "%REMLINK_BUILD_STATUS%"=="0" (
   echo.
-  echo SUCCESS: All three ZIP packages were built and verified. See the paths above.
+  echo SUCCESS: All three packages were built and verified. See the paths above.
 ) else (
   echo.
   echo FAILED: Build stopped. See the error above. Exit code: %REMLINK_BUILD_STATUS%

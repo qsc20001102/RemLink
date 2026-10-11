@@ -372,10 +372,23 @@ func (h *Hub) register(connected *connection, capabilities protocol.NodeCapabili
 
 func (h *Hub) unregister(nodeID string, expected *connection) {
 	h.mu.Lock()
+	removed := false
 	if h.connections[nodeID] == expected {
 		delete(h.connections, nodeID)
+		removed = true
 	}
 	h.mu.Unlock()
+	if removed {
+		name := expected.node.Name
+		if lookup, ok := h.store.(interface {
+			GetNode(context.Context, string) (model.Node, error)
+		}); ok {
+			if node, err := lookup.GetNode(context.Background(), nodeID); err == nil {
+				name = node.Name
+			}
+		}
+		h.recordEvent(context.Background(), nodeID, "WARN", "设备已断开服务器连接", map[string]any{"node_name": name, "event": "node_disconnected"})
+	}
 }
 
 func (h *Hub) send(connected *connection, messageType protocol.ControlMessageType, requestID string, payload any) error {

@@ -1,31 +1,25 @@
-# RemLink Engineer 独立便携包
+# RemLink Engineer 1.1.0
 
-本目录只属于 Engineer，不包含 Site 或 Server 程序。请把整个目录放在可持续写入的位置，例如 `C:\RemLink\Engineer`；不要只复制 EXE，也不要与 Site 解压到同一目录。
+解压后双击 `RemLinkEngineer.exe`，Windows 会请求管理员权限。程序需要这个权限管理 RemLink 网卡和远程路由。
 
 ## 首次使用
 
-1. 以管理员身份打开 PowerShell，进入本目录。
-2. 编辑 `engineer.yaml`，填写 Server URL、Engineer 名称和 `join_token`。
-3. 直接执行：
+新电脑打开后会进入“设置”，填写 Server 公网地址、Engineer 名称和 Join Token，点击“保存并连接”。首次配置前不会联系服务器。地址使用完整的 HTTP/HTTPS 根地址，例如 `https://remlink.example.com`。
 
-~~~powershell
-.\RemLinkEngineer.exe
-~~~
+已配置的电脑下次打开会自动沿用本机设置并连接，无需填写 YAML。名称位于“设置”的第一项；Server 公网地址和 Join Token 始终遮挡显示，可以修改，没有显示按钮。保存后会先关闭旧连接，再使用新设置连接。首次注册、切换 Server 或同步设备名称需要有效 Join Token。“设置”中的“打开配置存储目录”可打开当前电脑使用的数据目录。
 
-`join_token` 会以明文保存在 YAML 中，用于首次注册、切换 Server 和同步改名；注册后的 Node Token 和 WireGuard 私钥仍由 DPAPI 保护。后续直接以管理员身份运行 `RemLinkEngineer.exe`。默认配置路径始终是 EXE 旁的 `engineer.yaml`，与启动时的当前工作目录无关。
+## 连接现场
 
-修改 YAML 后退出并重新启动，程序会自动同步 `identity.json`，无需删除文件。修改 `node_name` 会立即更新本地身份；填写当前 Server 的有效 `join_token` 后，也会同步服务器显示名称。切换 `server` 时填写新 Server 的有效 `join_token`，注册成功后自动更新身份；失败时保留原身份。节点 ID、WireGuard 密钥及路由清理记录会保留。
+在“连接”中选择在线现场，添加远程 IPv4 网段或使用网段计算器，通过本地冲突检查后点击“连接现场”。各现场的网段独立保存。连接页显示正在连接、连接成功或失败原因；“连接现场”和“断开连接”两个按钮始终保留，根据会话状态启用。会话统计和详情在“会话”页查看。顶部网络状态始终固定显示，现场节点与远程网段区域填满剩余空间。
 
-不知道远程网段如何填写时，点击连接页的“网段计算器”，输入目标设备 IP 和子网掩码。例如 `192.168.13.10`、`255.255.255.0` 会得到 `192.168.13.0/24`。点击“填入远程网段”后，再点击“添加”完成冲突预检和保存。
+点击窗口关闭按钮，可以选择“隐藏到托盘”“直接退出”或“取消”。托盘图标可恢复主窗口，右键可退出程序；隐藏窗口会保持后台连接，直接退出会停止网络运行时。
 
-窗口底部的“实时日志”默认显示最新一条状态，切换页面或滚动时仍保持可见。点击右侧“展开”查看当前保留的日志记录，可搜索、按级别筛选或关闭“跟随最新”浏览旧记录；点击“折叠”恢复单行显示。侧栏“日志”仍提供完整日志列表。
+## 本机数据与升级
 
-## 本目录中的运行文件
+身份、`settings.json`、`site-profiles.json` 和日志默认位于 `%ProgramData%\RemLink\Engineer`。Join Token、Node Token 和 WireGuard 私钥使用 Windows 本机加密。软件包可以更换目录，同一电脑仍使用原身份和设置。
 
-- `RemLinkEngineer.svg`、`RemLinkEngineer.ico`：Engineer 专属图标；ICO 已嵌入 EXE，也可用于快捷方式。
-- `identity.json`：NodeID、Node Token 和 WireGuard 私钥等 DPAPI 保护身份，仅可在生成它的 Windows 主机解密。
-- `site-profiles.json`：由界面自动生成，按 Site NodeID 保存各现场的 Remote CIDR；不包含密钥或 Token。切换现场时会自动加载对应网段。
-- `logs\engineer.jsonl`：Engineer 日志。
-- `wintun.dll`：EXE 内嵌的固定版本 Wintun 首次运行释放文件，程序会校验 SHA-256。
+升级旧版时先退出旧进程。如果身份已经在本机目录中，新版会导入旧的本机 YAML；如果还在旧包中，在原目录运行一次新版即可导入身份、配置和现场网段。原文件保留供回退；导入后以应用内设置为准，不再编辑旧 YAML。
 
-备份或升级前先退出 Engineer。升级时保留 `engineer.yaml`、`identity.json`、`site-profiles.json` 和 `logs`，只替换通过校验的新 EXE；完整三端流程见 `docs\deployment-and-usage.md`。
+转发软件包时不要附带本机数据目录。另一台电脑首次打开会要求配置并创建独立节点；Windows 重装或删除本机身份后需要重新注册。备份前退出程序，再备份本机数据目录。
+
+完整部署说明见 `docs/deployment-and-usage.md`。

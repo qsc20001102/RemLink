@@ -104,7 +104,8 @@ def export(args):
             require((original["os"], original["architecture"]) == ("linux", "amd64"), "Runtime must be linux/amd64")
             history = []
             for item in original["history"]:
-                if "remlink-server" in item.get("created_by", ""):
+                command = item.get("created_by", "")
+                if "remlink-server" in command or command == "COPY current RemLink Server release, preflight and notices; mkdir /app/data":
                     break
                 history.append(item)
             count = sum(not item.get("empty_layer", False) for item in history)

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "RemLink Site",
+  "outputfilename": "RemLinkSite",
+  "frontend:dir": "../../frontend/site",
+  "frontend:install": "npm install --prefix ..",
+  "frontend:build": "npm run build:site --prefix ..",
+  "frontend:dev:watcher": "npm run dev:site --prefix ..",
+  "frontend:dev:serverUrl": "http://127.0.0.1:34117",
+  "author": { "name": "RemLink" }
+}

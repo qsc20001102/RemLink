@@ -21,7 +21,7 @@ function duration(session: SessionRecord) {
     <div class="table-wrap"><table>
       <thead><tr><th>会话 ID</th><th>Engineer</th><th>Site</th><th>远程网段</th><th>状态</th><th>上传 / 下载</th><th>持续时间</th><th>{{ history ? '结束时间' : '操作' }}</th></tr></thead>
       <tbody><tr v-for="session in sessions" :key="session.session_id">
-        <td class="mono">{{ String(session.session_id).slice(0, 14) }}</td><td>{{ nodeName(session.engineer_node_id) }}</td><td>{{ nodeName(session.site_node_id) }}</td><td class="mono">{{ session.cidrs.join(', ') }}</td>
+        <td class="mono" :title="session.session_id">{{ session.session_id }}</td><td>{{ nodeName(session.engineer_node_id) }}</td><td>{{ nodeName(session.site_node_id) }}</td><td class="mono">{{ session.cidrs.join(', ') }}</td>
         <td><StatusDot :status="session.status" /><small v-if="session.error_code" class="red">{{ reasonLabel(session.error_code) }}</small></td><td>{{ formatBytes(session.counters.upload_bytes) }} / {{ formatBytes(session.counters.download_bytes) }}</td><td>{{ duration(session) }}</td>
         <td v-if="history">{{ formatTime(session.closed_at) }}</td><td v-else><button class="disconnect" :disabled="session.status !== 'ACTIVE'" @click="$emit('disconnect', session)">强制断开</button></td>
       </tr><tr v-if="!sessions.length"><td colspan="8" class="empty">{{ emptyLabel || '当前没有会话' }}</td></tr></tbody>

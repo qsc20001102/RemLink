@@ -10,20 +10,19 @@ import { api, setAdminToken } from './api'
 import type { EventRecord, NetworkConfig, NodeRecord, SessionFilter, SessionRecord } from './types'
 import { errorLabel, levelLabel, moduleLabel } from './zh-cn'
 
-type Page = 'overview' | 'nodes' | 'sessions' | 'network' | 'logs'
+type Page = 'overview' | 'engineers' | 'sites' | 'sessions' | 'network' | 'logs'
 const page = ref<Page>('overview')
-const releaseVersion = import.meta.env.VITE_APP_VERSION || '1.0.0'
+const releaseVersion = import.meta.env.VITE_APP_VERSION || '1.1.0'
 const nodes = ref<NodeRecord[]>([]), sessions = ref<SessionRecord[]>([]), historySessions = ref<SessionRecord[]>([]), logs = ref<EventRecord[]>([])
 let network = reactive<NetworkConfig>({ overlay_cidr:'', server_overlay_ip:'', wireguard_port:51820, session_udp_port:6200, mtu:1280, config_version:1 })
 const busy = ref(false), error = ref(''), saved = ref(false), adminToken = ref(localStorage.getItem('remlink-admin-token') ?? '')
 const logLevel = ref(''), logModule = ref(''), logNode = ref(''), logSession = ref(''), logFrom = ref(''), logTo = ref('')
-function localDateTime(date: Date){const offset = date.getTimezoneOffset() * 60000; return new Date(date.getTime() - offset).toISOString().slice(0,16)}
-const historyFrom = ref(localDateTime(new Date(Date.now() - 7 * 86400000)))
+const historyFrom = ref('')
 const historyTo = ref(''), historyEngineer = ref(''), historySite = ref(''), historyStatus = ref(''), historyId = ref('')
-const historyFilter = ref<SessionFilter>({kind:'history',from:new Date(Date.now() - 7 * 86400000).toISOString(),limit:500})
+const historyFilter = ref<SessionFilter>({kind:'history',limit:500})
 let refreshTimer = 0
 const logModules = ['CORE','BOOTSTRAP','WG','IPAM','CONTROL','SESSION','ROUTE','NETSTACK','TUN','SUBNET','SYSTEM']
-const nav: Array<{id:Page; label:string; icon:string}> = [{id:'overview',label:'概览',icon:'overview'},{id:'nodes',label:'节点',icon:'nodes'},{id:'sessions',label:'会话',icon:'sessions'},{id:'network',label:'网络',icon:'network'},{id:'logs',label:'日志',icon:'logs'}]
+const nav: Array<{id:Page; label:string; icon:string}> = [{id:'overview',label:'概览',icon:'overview'},{id:'engineers',label:'Engineer 节点',icon:'nodes'},{id:'sites',label:'Site 节点',icon:'nodes'},{id:'sessions',label:'会话',icon:'sessions'},{id:'network',label:'网络',icon:'network'},{id:'logs',label:'日志',icon:'logs'}]
 const unstable = computed(() => nodes.value.filter(node => node.status === 'UNSTABLE').length)
 const offline = computed(() => nodes.value.filter(node => node.status === 'OFFLINE').length)
 const healthLabel = computed(() => offline.value ? '需关注' : unstable.value ? '不稳定' : '健康')
@@ -36,6 +35,7 @@ function logFilter(){return {level:logLevel.value||undefined,module:logModule.va
 async function load(){busy.value=true;error.value='';try{const [nextNodes,nextSessions,nextHistory,nextNetwork,nextLogs]=await Promise.all([api.nodes(),api.sessions({kind:'live'}),api.sessions(historyFilter.value),api.network(),api.logs(logFilter())]);nodes.value=arrayOrEmpty(nextNodes);sessions.value=arrayOrEmpty(nextSessions);historySessions.value=arrayOrEmpty(nextHistory);logs.value=arrayOrEmpty(nextLogs);Object.assign(network,nextNetwork)}catch(cause){error.value=errorLabel(cause)}finally{busy.value=false}}
 async function refreshRuntime(){if(busy.value)return;try{const [nextNodes,nextSessions,nextHistory,nextLogs]=await Promise.all([api.nodes(),api.sessions({kind:'live'}),page.value==='sessions'?api.sessions(historyFilter.value):Promise.resolve(historySessions.value),api.logs(logFilter())]);nodes.value=arrayOrEmpty(nextNodes);sessions.value=arrayOrEmpty(nextSessions);historySessions.value=arrayOrEmpty(nextHistory);logs.value=arrayOrEmpty(nextLogs)}catch(cause){error.value=errorLabel(cause)}}
 async function queryHistory(){historyFilter.value={kind:'history',from:historyFrom.value?new Date(historyFrom.value).toISOString():undefined,to:historyTo.value?new Date(historyTo.value).toISOString():undefined,engineer_node_id:historyEngineer.value||undefined,site_node_id:historySite.value||undefined,status:historyStatus.value||undefined,session_id:historyId.value.trim()||undefined,limit:500};busy.value=true;error.value='';try{historySessions.value=arrayOrEmpty(await api.sessions(historyFilter.value))}catch(cause){error.value=errorLabel(cause)}finally{busy.value=false}}
+async function resetHistory(){historyFrom.value='';historyTo.value='';historyEngineer.value='';historySite.value='';historyStatus.value='';historyId.value='';await queryHistory()}
 async function runAction(action:()=>Promise<unknown>){busy.value=true;error.value='';try{await action();await load()}catch(cause){error.value=errorLabel(cause)}finally{busy.value=false}}
 async function editNode(node:NodeRecord){const name=window.prompt('节点名称',node.name);if(name===null)return;const overlay=window.prompt('Overlay IP',node.overlay_ip);if(overlay===null)return;await runAction(()=>api.patchNode(node.node_id,{name,overlay_ip:overlay}))}
 async function revokeNode(node:NodeRecord){if(!window.confirm(`撤销节点 ${node.name}？此操作会断开相关会话。`))return;await runAction(()=>api.deleteNode(node.node_id))}
@@ -62,9 +62,10 @@ onBeforeUnmount(()=>clearInterval(refreshTimer))
 
         <template v-if="page==='overview'">
           <TopologyView :nodes="nodes" :sessions="realtimeSessions" :server-i-p="network.server_overlay_ip" />
-          <section class="overview-events panel"><div class="section-title"><div><h2>最近事件</h2><p>记录系统关键活动</p></div><button class="text-link" @click="page='logs'">查看全部日志 <Icon name="arrow" /></button></div><LogTable :logs="logs.slice(0,20)" :bare="true" /></section>
+          <section class="overview-events panel"><div class="section-title"><div><h2>最近事件</h2><p>记录系统关键活动</p></div><button class="text-link" @click="page='logs'">查看全部日志 <Icon name="arrow" /></button></div><LogTable :logs="logs.slice(0,20)" :nodes="nodes" :bare="true" /></section>
         </template>
-        <div v-else-if="page==='nodes'" class="node-sections"><NodeTable title="Engineer 节点" empty-label="暂无 Engineer 节点" :nodes="engineerNodes" @edit="editNode" @revoke="revokeNode"/><NodeTable title="Site 节点" empty-label="暂无 Site 节点" :nodes="siteNodes" @edit="editNode" @revoke="revokeNode"/></div>
+        <div v-else-if="page==='engineers'" class="node-page"><NodeTable title="Engineer 节点" empty-label="暂无 Engineer 节点" :nodes="engineerNodes" @edit="editNode" @revoke="revokeNode"/></div>
+        <div v-else-if="page==='sites'" class="node-page"><NodeTable title="Site 节点" empty-label="暂无 Site 节点" :nodes="siteNodes" @edit="editNode" @revoke="revokeNode"/></div>
         <div v-else-if="page==='sessions'" class="session-sections">
           <SessionTable title="实时会话" empty-label="当前没有实时会话" :sessions="realtimeSessions" :nodes="nodes" @disconnect="disconnect"/>
           <SessionTable title="历史会话" empty-label="所选条件下暂无历史会话" :history="true" :sessions="historySessions" :nodes="nodes" @disconnect="disconnect">
@@ -76,11 +77,12 @@ onBeforeUnmount(()=>clearInterval(refreshTimer))
               <select v-model="historyStatus" aria-label="会话状态筛选"><option value="">全部状态</option><option value="CLOSED">已关闭</option><option value="FAILED">失败</option></select>
               <input v-model="historyId" inputmode="numeric" placeholder="会话 ID" aria-label="会话 ID 筛选" @keyup.enter="queryHistory"/>
               <button :disabled="busy" @click="queryHistory">查询</button>
+              <button :disabled="busy" @click="resetHistory">清空筛选</button>
             </div></template>
           </SessionTable>
         </div>
         <NetworkForm v-else-if="page==='network'" v-model="network" :busy="busy" :saved="saved" :full="true" @save="saveNetwork(false)" @rotate="saveNetwork(true)"/>
-        <section v-else class="panel logs-page"><div class="section-title log-filter-title"><h2>事件日志</h2><div class="filters"><input v-model="logFrom" type="datetime-local" title="起始时间"/><input v-model="logTo" type="datetime-local" title="结束时间"/><select v-model="logLevel"><option value="">全部级别</option><option value="INFO">{{levelLabel('INFO')}}</option><option value="WARN">{{levelLabel('WARN')}}</option><option value="ERROR">{{levelLabel('ERROR')}}</option></select><select v-model="logModule"><option value="">全部模块</option><option v-for="module in logModules" :key="module" :value="module">{{moduleLabel(module)}}</option></select><input v-model="logNode" placeholder="节点 ID"/><input v-model="logSession" placeholder="会话 ID"/><button @click="load">查询</button></div></div><LogTable :logs="logs" :bare="true"/></section>
+        <section v-else class="panel logs-page"><div class="section-title log-filter-title"><h2>事件日志</h2><div class="filters"><input v-model="logFrom" type="datetime-local" title="起始时间"/><input v-model="logTo" type="datetime-local" title="结束时间"/><select v-model="logLevel"><option value="">全部级别</option><option value="INFO">{{levelLabel('INFO')}}</option><option value="WARN">{{levelLabel('WARN')}}</option><option value="ERROR">{{levelLabel('ERROR')}}</option></select><select v-model="logModule"><option value="">全部模块</option><option v-for="module in logModules" :key="module" :value="module">{{moduleLabel(module)}}</option></select><select v-model="logNode" aria-label="按设备筛选日志"><option value="">全部设备</option><option v-for="node in nodes" :key="node.node_id" :value="node.node_id">{{node.name}}</option></select><input v-model="logSession" placeholder="会话 ID"/><button @click="load">查询</button></div></div><LogTable :logs="logs" :nodes="nodes" :bare="true"/></section>
       </div>
     </main>
   </div>

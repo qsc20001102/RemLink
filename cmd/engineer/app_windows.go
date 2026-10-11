@@ -6,13 +6,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/netip"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"golang.org/x/sys/windows"
 
+	"remlink/internal/clientsettings"
+	"remlink/internal/desktopclient"
+	"remlink/internal/desktopwindow"
+	"remlink/internal/identity"
 	"remlink/internal/localization"
 	"remlink/internal/model"
 	"remlink/internal/nodeagent"
@@ -22,16 +27,22 @@ import (
 )
 
 type EngineerApp struct {
-	mu       sync.RWMutex
-	ctx      context.Context
-	cancel   context.CancelFunc
-	options  nodeagent.Options
-	engine   *sessionruntime.EngineerRuntime
-	profiles *siteprofile.Store
-	state    EngineerState
+	mu         sync.RWMutex
+	ctx        context.Context
+	cancel     context.CancelFunc
+	options    nodeagent.Options
+	engine     *sessionruntime.EngineerRuntime
+	profiles   *siteprofile.Store
+	state      EngineerState
+	controller *desktopclient.Controller
+	window     *desktopwindow.Window
 }
 
 type EngineerState struct {
+	Configured       bool                   `json:"configured"`
+	Connecting       bool                   `json:"connecting"`
+	NodeName         string                 `json:"nodeName"`
+	ConnectionError  string                 `json:"connectionError"`
 	ServerConnected  bool                   `json:"serverConnected"`
 	ControlConnected bool                   `json:"controlConnected"`
 	ServerURL        string                 `json:"serverURL"`
@@ -41,6 +52,56 @@ type EngineerState struct {
 	SiteCIDRs        map[string][]string    `json:"siteCIDRs"`
 	Session          EngineerSessionState   `json:"session"`
 	Logs             []EngineerLog          `json:"logs"`
+}
+
+func (a *EngineerApp) configure(settings *clientsettings.Store, identityStore *identity.Store) {
+	options := a.options
+	options.OnLatency = func(delay time.Duration) {
+		a.mu.Lock()
+		a.state.Session.LatencyMS = max(1, int(delay.Round(time.Millisecond)/time.Millisecond))
+		a.mu.Unlock()
+		a.emit()
+	}
+	options.OnNodeList = func(payload protocol.NodeListPayload) {
+		a.mu.Lock()
+		a.state.Sites = append([]protocol.SiteSummary{}, payload.Sites...)
+		a.mu.Unlock()
+		a.emit()
+	}
+	options.OnSession = a.onSession
+	options.OnEngineerReady = func(engine *sessionruntime.EngineerRuntime) { a.mu.Lock(); a.engine = engine; a.mu.Unlock(); a.emit() }
+	a.controller = desktopclient.New(options, settings, identityStore, a.emit, func() {
+		a.mu.Lock()
+		a.engine = nil
+		a.state.Sites = []protocol.SiteSummary{}
+		a.state.Session = EngineerSessionState{CIDRs: []string{}, Status: "IDLE"}
+		a.mu.Unlock()
+	}, a.appendLog)
+}
+
+func (a *EngineerApp) GetSettings() (clientsettings.Settings, error) { return a.controller.Settings() }
+func (a *EngineerApp) SaveSettings(value clientsettings.Settings) error {
+	return a.controller.SaveSettings(value)
+}
+func (a *EngineerApp) RenameNode(name string) error { return a.controller.RenameNode(name) }
+func (a *EngineerApp) ReconnectServer() error       { return a.controller.Reconnect() }
+func (a *EngineerApp) HideToTray() error            { return a.window.HideToTray() }
+func (a *EngineerApp) QuitApp()                     { a.window.Quit() }
+
+func (a *EngineerApp) OpenConfigDirectory() error {
+	if a.options.IdentityPath == "" {
+		return errors.New("本机配置存储目录尚未就绪")
+	}
+	directory, err := filepath.Abs(filepath.Dir(a.options.IdentityPath))
+	if err != nil {
+		return err
+	}
+	path, err := windows.UTF16PtrFromString(directory)
+	if err != nil {
+		return err
+	}
+	verb, _ := windows.UTF16PtrFromString("open")
+	return windows.ShellExecute(0, verb, path, nil, nil, windows.SW_SHOWNORMAL)
 }
 
 type EngineerSessionState struct {
@@ -64,7 +125,7 @@ type EngineerLog struct {
 }
 
 func NewEngineerApp(options nodeagent.Options, profiles *siteprofile.Store) *EngineerApp {
-	return &EngineerApp{options: options, profiles: profiles, state: EngineerState{
+	return &EngineerApp{options: options, profiles: profiles, window: desktopwindow.New(), state: EngineerState{
 		ServerURL: options.ServerURL, Version: options.Version,
 		Sites: []protocol.SiteSummary{}, SiteCIDRs: map[string][]string{}, Logs: []EngineerLog{},
 		Session: EngineerSessionState{CIDRs: []string{}, Status: "IDLE"},
@@ -98,59 +159,9 @@ func (a *EngineerApp) Startup(wailsContext context.Context) {
 			a.mu.Unlock()
 		}
 	}
-	options := a.options
-	options.OnOverlayReady = func(address netip.Addr) {
-		a.mu.Lock()
-		a.state.ServerConnected = true
-		a.state.OverlayIP = address.String()
-		a.mu.Unlock()
-		a.appendLog("INFO", "Overlay 已就绪："+address.String())
-		a.emit()
+	if a.controller != nil {
+		a.controller.Start(ctx)
 	}
-	options.OnControlState = func(connected bool) {
-		a.mu.Lock()
-		a.state.ControlConnected = connected
-		a.mu.Unlock()
-		if connected {
-			a.appendLog("INFO", "Control WebSocket 已连接")
-		} else {
-			a.appendLog("WARN", "Control WebSocket 已断开，正在重连")
-		}
-		a.emit()
-	}
-	options.OnLatency = func(delay time.Duration) {
-		milliseconds := int(delay.Round(time.Millisecond) / time.Millisecond)
-		if milliseconds < 1 {
-			milliseconds = 1
-		}
-		a.mu.Lock()
-		a.state.Session.LatencyMS = milliseconds
-		a.mu.Unlock()
-		a.emit()
-	}
-	options.OnNodeList = func(payload protocol.NodeListPayload) {
-		a.mu.Lock()
-		a.state.Sites = append([]protocol.SiteSummary{}, payload.Sites...)
-		a.mu.Unlock()
-		a.emit()
-	}
-	options.OnSession = a.onSession
-	options.OnEngineerReady = func(engine *sessionruntime.EngineerRuntime) {
-		a.mu.Lock()
-		a.engine = engine
-		a.mu.Unlock()
-		a.emit()
-	}
-	go func() {
-		if err := nodeagent.Run(ctx, options); err != nil && !errors.Is(err, context.Canceled) {
-			a.appendLog("ERROR", localization.ErrorMessage(err.Error()))
-			a.mu.Lock()
-			a.state.ServerConnected = false
-			a.state.ControlConnected = false
-			a.mu.Unlock()
-			a.emit()
-		}
-	}()
 }
 
 func (a *EngineerApp) Shutdown(context.Context) {
@@ -159,9 +170,14 @@ func (a *EngineerApp) Shutdown(context.Context) {
 		a.cancel()
 	}
 	a.mu.Unlock()
+	if a.controller != nil {
+		a.controller.Close()
+	}
+	a.window.Close()
 }
 
 func (a *EngineerApp) GetState() EngineerState {
+	a.window.MarkUIReady()
 	a.mu.RLock()
 	state := a.state
 	// Wails serialises nil slices as JSON null. The frontend contract requires
@@ -175,6 +191,11 @@ func (a *EngineerApp) GetState() EngineerState {
 	state.Session.CIDRs = append([]string{}, a.state.Session.CIDRs...)
 	engine := a.engine
 	a.mu.RUnlock()
+	if a.controller != nil {
+		connection := a.controller.Snapshot()
+		state.Configured, state.Connecting, state.NodeName, state.ConnectionError = connection.Configured, connection.Connecting, connection.NodeName, connection.ConnectionError
+		state.ServerURL, state.ServerConnected, state.ControlConnected, state.OverlayIP = connection.ServerURL, connection.ServerConnected, connection.ControlConnected, connection.OverlayIP
+	}
 	if engine != nil {
 		snapshot := engine.Snapshot()
 		if snapshot.ID != 0 {
@@ -189,8 +210,8 @@ func (a *EngineerApp) GetState() EngineerState {
 	return state
 }
 
-// SaveSiteCIDRs persists one Site's non-secret Remote CIDR profile beside the
-// Engineer executable. An empty list clears only that Site's profile.
+// SaveSiteCIDRs persists one Site's non-secret Remote CIDR profile locally.
+// An empty list clears only that Site's profile.
 func (a *EngineerApp) SaveSiteCIDRs(siteNodeID string, cidrs []string) error {
 	a.mu.RLock()
 	engine := a.engine

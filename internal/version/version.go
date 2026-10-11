@@ -3,7 +3,7 @@ package version
 
 var (
 	// Version is overridden by release builds with -ldflags.
-	Version = "dev"
+	Version = "1.1.0"
 	// Commit is overridden by release builds with -ldflags.
 	Commit = "unknown"
 )

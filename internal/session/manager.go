@@ -55,9 +55,10 @@ type Manager struct {
 }
 
 type runtimeSession struct {
-	session   model.Session
-	requestID string
-	timer     *time.Timer
+	session     model.Session
+	requestID   string
+	timer       *time.Timer
+	closeReason string
 }
 
 func NewManager(store Store, sender Sender, config Config) (*Manager, error) {
@@ -363,6 +364,7 @@ func (m *Manager) HandleNodeStatusChange(ctx context.Context, node model.Node, s
 }
 
 func (m *Manager) closeLocked(ctx context.Context, runtime *runtimeSession, reason string) error {
+	runtime.closeReason = reason
 	runtime.stopTimer()
 	if err := m.setStatusLocked(ctx, runtime, model.SessionStopping, ""); err != nil {
 		return err
@@ -452,6 +454,8 @@ func (m *Manager) recordEvent(ctx context.Context, runtime *runtimeSession, leve
 		"engineer_node_id": runtime.session.EngineerNodeID,
 		"site_node_id":     runtime.session.SiteNodeID,
 		"error_code":       code,
+		"session_status":   string(runtime.session.Status),
+		"reason":           runtime.closeReason,
 	})
 	_ = appender.AppendEvent(ctx, model.EventLog{
 		Level: level, Module: string(logging.ModuleSession), SessionID: runtime.session.ID,

@@ -4,15 +4,22 @@ import Icon from './Icon.vue'
 import SessionPanel from './components/SessionPanel.vue'
 import LogPanel from './components/LogPanel.vue'
 import SubnetCalculator from './components/SubnetCalculator.vue'
+import SettingsForm from '../../shared/SettingsForm.vue'
+import CloseDialog from '../../shared/CloseDialog.vue'
+import { serializeRefresh } from '../../shared/state-refresh'
+import type { ClientSettings } from '../../shared/types'
 import { formatTime } from './format'
 import engineerMark from '../../branding/engineer.svg'
 import siteMark from '../../branding/site.svg'
-import { checkCIDRs, createSession, disconnectSession, getState, saveSiteCIDRs } from './api'
+import { checkCIDRs, createSession, disconnectSession, getState, saveSiteCIDRs, getSettings, saveSettings, openConfigDirectory, reconnectServer, hideToTray, quitApp } from './api'
 import type { EngineerState, SiteSummary } from './types'
 import { errorLabel, statusLabel } from './zh-cn'
 
 const state = ref<EngineerState | null>(null)
 const page = ref<'connection' | 'session' | 'logs' | 'settings'>('connection')
+const settings = ref<ClientSettings | null>(null), settingsBusy = ref(false), closeDialog = ref(false)
+const pendingAction = ref<'connect' | 'disconnect' | null>(null)
+const connectionFeedback = ref<{ tone: 'pending' | 'success' | 'error'; message: string } | null>(null)
 const logsExpanded = ref(false)
 const selectedSiteID = ref('')
 const cidrs = ref<string[]>([])
@@ -26,6 +33,7 @@ const preflightState = ref<'checking' | 'pass' | 'fail'>('checking')
 const preflightMessage = ref('正在检查本地路由…')
 let timer = 0
 let unsubscribe: (() => void) | undefined
+let unsubscribeClose: (() => void) | undefined
 let preflightRevision = 0
 
 const active = computed(() => state.value?.session.status === 'ACTIVE')
@@ -34,8 +42,9 @@ const sessionBusy = computed(() => {
   return status === 'CREATING' || status === 'PREPARING_SITE' || status === 'READY' || status === 'ACTIVE' || status === 'STOPPING'
 })
 const selectedSite = computed<SiteSummary | undefined>(() => state.value?.sites.find(site => site.node_id === selectedSiteID.value))
-const editLocked = computed(() => busy.value || editing.value || sessionBusy.value || !selectedSite.value)
-const canConnect = computed(() => !busy.value && !editing.value && !sessionBusy.value && state.value?.serverConnected && state.value.controlConnected && preflightState.value === 'pass' && selectedSite.value?.online && selectedSite.value.remote_subnet_capability && cidrs.value.length > 0)
+const editLocked = computed(() => busy.value || !!pendingAction.value || editing.value || sessionBusy.value || !selectedSite.value)
+const canConnect = computed(() => !busy.value && !pendingAction.value && !editing.value && !sessionBusy.value && state.value?.serverConnected && state.value.controlConnected && preflightState.value === 'pass' && selectedSite.value?.online && selectedSite.value.remote_subnet_capability && cidrs.value.length > 0)
+const canDisconnect = computed(() => !busy.value && pendingAction.value !== 'disconnect' && !!state.value?.session.id && ['READY', 'ACTIVE'].includes(state.value.session.status))
 const onlineCount = computed(() => state.value?.sites.filter(site => site.online).length ?? 0)
 const filteredSites = computed(() => {
   const query = siteQuery.value.trim().toLocaleLowerCase()
@@ -45,7 +54,7 @@ const pageCopy = computed(() => ({
   connection: ['远程连接', '选择现场并配置远程网段，安全访问现场设备。'],
   session: ['当前会话', '查看会话状态、远程网段与数据传输情况。'],
   logs: ['运行日志', '按级别和关键词查找客户端运行事件。'],
-  settings: ['客户端设置', '查看本机运行配置与网络信息。'],
+  settings: ['客户端设置', '设置服务器地址、设备名称和注册令牌。'],
 }[page.value]))
 const connectHint = computed(() => {
   if (sessionBusy.value) return '会话进行中，断开后可修改现场和网段。'
@@ -115,29 +124,47 @@ async function loadSelectedSiteProfile() {
   cidrs.value = Array.from(state.value?.siteCIDRs[selectedSiteID.value] ?? [])
   await runPreflight()
 }
-async function refresh() {
-  state.value = await getState()
+const refresh = serializeRefresh(getState, snapshot => {
+  const first = state.value === null
+  state.value = snapshot
+  if (first && !snapshot.configured) page.value = 'settings'
   if (['CREATING', 'PREPARING_SITE', 'READY', 'ACTIVE', 'STOPPING'].includes(state.value.session.status) && state.value.session.cidrs.length > 0) {
     cidrs.value = Array.from(state.value.session.cidrs)
   }
   if (!selectedSiteID.value || (!sessionBusy.value && !selectedSite.value)) {
     selectedSiteID.value = state.value.sites.find(site => site.online)?.node_id ?? ''
   }
+})
+async function persistSettings(value: ClientSettings) {
+  settingsBusy.value = true; error.value = ''
+  try { await saveSettings(value); settings.value = await getSettings(); await refresh(); if (state.value?.configured) page.value = 'connection' } catch (cause) { error.value = errorLabel(cause) } finally { settingsBusy.value = false }
 }
+async function openSettingsDirectory() { try { await openConfigDirectory() } catch (cause) { error.value = errorLabel(cause) } }
+async function retryServer() { try { await reconnectServer(); await refresh() } catch (cause) { error.value = errorLabel(cause) } }
+async function background() { try { await hideToTray(); closeDialog.value = false } catch (cause) { error.value = errorLabel(cause) } }
+async function exitApp() { try { await quitApp() } catch (cause) { error.value = errorLabel(cause) } }
 async function connect() {
   if (!canConnect.value) return
-  busy.value = true; error.value = ''
-  try { await createSession(selectedSiteID.value, cidrs.value); await refresh() } catch (cause) { error.value = errorLabel(cause) } finally { busy.value = false }
+  busy.value = true; error.value = ''; pendingAction.value = 'connect'
+  connectionFeedback.value = { tone: 'pending', message: `正在连接 ${selectedSite.value?.name || '现场'}，请稍候…` }
+  try { await createSession(selectedSiteID.value, Array.from(cidrs.value)); await refresh() }
+  catch (cause) { pendingAction.value = null; connectionFeedback.value = { tone: 'error', message: `连接失败：${errorLabel(cause)}` } }
+  finally { busy.value = false }
 }
 async function disconnect() {
-  if (!active.value || busy.value) return
-  busy.value = true; error.value = ''
-  try { await disconnectSession(); await refresh() } catch (cause) { error.value = errorLabel(cause) } finally { busy.value = false }
+  if (!canDisconnect.value) return
+  busy.value = true; error.value = ''; pendingAction.value = 'disconnect'
+  connectionFeedback.value = { tone: 'pending', message: '正在断开现场连接，请稍候…' }
+  try { await disconnectSession(); await refresh() }
+  catch (cause) { pendingAction.value = null; connectionFeedback.value = { tone: 'error', message: `断开失败：${errorLabel(cause)}` } }
+  finally { busy.value = false }
 }
 onMounted(async () => {
+  unsubscribeClose = window.runtime?.EventsOn('remlink:close-request', () => { closeDialog.value = true })
   try {
     await refresh()
-    await runPreflight()
+    settings.value = await getSettings()
+    if (state.value?.configured) await runPreflight()
     const safeRefresh = () => { void refresh().catch(cause => { error.value = errorLabel(cause) }) }
     timer = window.setInterval(safeRefresh, 2000)
     unsubscribe = window.runtime?.EventsOn('remlink:state', safeRefresh)
@@ -145,8 +172,26 @@ onMounted(async () => {
     error.value = errorLabel(cause)
   }
 })
-onBeforeUnmount(() => { clearInterval(timer); unsubscribe?.() })
+onBeforeUnmount(() => { clearInterval(timer); unsubscribe?.(); unsubscribeClose?.() })
 watch(selectedSiteID, () => { void loadSelectedSiteProfile() })
+watch(() => state.value?.session.status, (status, previous) => {
+  if (status === 'ACTIVE' && pendingAction.value !== 'disconnect') {
+    pendingAction.value = null
+    connectionFeedback.value = { tone: 'success', message: `连接成功，已连接到 ${state.value?.session.siteName || '现场'}。` }
+  } else if (status === 'FAILED' || (status === 'CLOSED' && pendingAction.value === 'connect')) {
+    pendingAction.value = null
+    connectionFeedback.value = { tone: 'error', message: `连接失败：${errorLabel(state.value?.session.reason || '请检查服务器和现场端连接')}` }
+  } else if (status === 'CLOSED') {
+    pendingAction.value = null
+    connectionFeedback.value = { tone: 'success', message: `现场连接已断开${state.value?.session.reason && state.value.session.reason !== 'ENGINEER_OPERATOR' ? `：${errorLabel(state.value.session.reason)}` : '。'}` }
+  } else if (status === 'IDLE' && previous && sessionInProgress(previous)) {
+    pendingAction.value = null
+    connectionFeedback.value = { tone: 'error', message: '现场连接已中断，请确认服务器连接后重试。' }
+  } else if (status && ['CREATING', 'PREPARING_SITE', 'READY', 'STOPPING'].includes(status)) {
+    connectionFeedback.value = { tone: 'pending', message: status === 'STOPPING' || pendingAction.value === 'disconnect' ? '正在断开现场连接，请稍候…' : `正在连接 ${state.value?.session.siteName || '现场'}，请稍候…` }
+  }
+})
+function sessionInProgress(status: string) { return ['CREATING', 'PREPARING_SITE', 'READY', 'ACTIVE', 'STOPPING'].includes(status) }
 </script>
 
 <template>
@@ -166,9 +211,11 @@ watch(selectedSiteID, () => { void loadSelectedSiteProfile() })
         <div><Icon name="check"/><span>控制通道</span><strong><i :class="state.controlConnected ? 'healthy' : 'offline'"></i>{{ state.controlConnected ? '在线' : '离线' }}</strong></div>
       </header>
 
-      <div class="workspace">
+      <div class="workspace" :class="{ 'connection-workspace': page === 'connection' }">
         <div class="title-row"><h1>{{ pageCopy[0] }}</h1><p>{{ pageCopy[1] }}</p></div>
         <div v-if="error" class="error-banner" role="alert"><span>{{ error }}</span><button class="icon-button" aria-label="关闭错误提示" @click="error = ''"><Icon name="close"/></button></div>
+        <div v-if="state.connectionError" class="connection-notice" role="alert"><span>{{ errorLabel(state.connectionError) }}</span><button class="secondary" @click="retryServer">重新连接</button></div>
+        <div v-if="!state.configured && page !== 'settings'" class="connection-notice"><span>请先完成客户端设置，再连接服务器。</span><button class="primary" @click="page = 'settings'">前往设置</button></div>
 
         <template v-if="page === 'connection'">
           <section class="connection-path" aria-label="当前连接路径">
@@ -209,24 +256,22 @@ watch(selectedSiteID, () => { void loadSelectedSiteProfile() })
                   <p v-if="!cidrs.length" class="cidr-empty">{{ selectedSite ? '尚未配置网段，请在上方添加。' : '选择现场后可配置远程网段。' }}</p>
                 </div>
                 <div class="preflight" :class="preflightState" role="status"><Icon :name="preflightState === 'pass' ? 'check' : preflightState === 'fail' ? 'alert' : 'session'"/><span>本地冲突预检：<strong>{{ preflightMessage }}</strong></span><button class="text-action" :disabled="editLocked || preflightState === 'checking'" @click="runPreflight">再次检查</button></div>
-                <div class="connect-action"><button class="primary" :disabled="!canConnect" aria-describedby="connect-hint" @click="connect"><Icon name="link"/>{{ busy && !active ? '正在建立…' : '连接现场' }}</button><p id="connect-hint">{{ connectHint }}</p></div>
+                <div class="connect-action"><button class="primary" :disabled="!canConnect" aria-describedby="connect-feedback" @click="connect"><Icon name="link"/>连接现场</button><button class="secondary danger-action" :disabled="!canDisconnect" @click="disconnect">断开连接</button></div>
+                <div id="connect-feedback" class="connection-feedback" :class="connectionFeedback?.tone || 'neutral'" role="status" aria-live="polite" aria-atomic="true"><Icon :name="connectionFeedback?.tone === 'success' ? 'check' : connectionFeedback?.tone === 'error' ? 'alert' : 'link'"/><p>{{ connectionFeedback?.message || connectHint }}</p></div>
               </div>
             </section>
           </div>
         </template>
 
-        <SessionPanel v-if="page === 'connection' || page === 'session'" :session="state.session" :busy="busy" @disconnect="disconnect"/>
+        <SessionPanel v-if="page === 'session'" :session="state.session" :busy="busy" @disconnect="disconnect"/>
         <LogPanel v-show="page === 'logs'" :logs="state.logs" :expanded="true" :visible="page === 'logs'"/>
 
-        <section v-if="page === 'settings'" class="panel settings-panel" aria-labelledby="settings-title">
-          <div class="panel-heading"><h2 id="settings-title">运行配置</h2><span class="badge neutral">只读</span></div>
-          <dl><dt>Server 公网地址</dt><dd class="mono">{{ state.serverURL || '未配置' }}</dd><dt>Overlay 地址</dt><dd class="mono">{{ state.overlayIP || '等待分配' }}</dd><dt>客户端版本</dt><dd>{{ state.version }}</dd><dt>数据面</dt><dd>IPv4 · 单 Wintun · wireguard-go</dd><dt>现场网关</dt><dd>gVisor netstack</dd></dl>
-          <div class="settings-note"><Icon name="settings"/><div><b>由本机配置与 Server Bootstrap 管理</b><p>网络地址、密钥与 Node Token 不在界面中复制或明文保存；Overlay 变更由 Server 触发重新 Bootstrap。</p></div></div>
-        </section>
+        <template v-if="page === 'settings' && settings"><SettingsForm :value="settings" role="Engineer" :configured="state.configured" :busy="settingsBusy" @save="persistSettings"/><div class="settings-directory"><button class="secondary" @click="openSettingsDirectory"><Icon name="monitor"/>打开配置存储目录</button><p>查看这台电脑保存的设置、身份和现场网段。</p></div></template>
       </div>
       <div class="logs-dock"><LogPanel :logs="state.logs" :expanded="logsExpanded" :visible="true" :docked="true" @toggle="logsExpanded = !logsExpanded" /></div>
     </main>
     <SubnetCalculator ref="subnetCalculator" :can-apply="!editLocked" @apply="applyCalculatedSubnet" />
   </div>
   <div v-else class="loading" role="status"><img :src="engineerMark" alt=""/><h1>RemLink Engineer</h1><p>{{ error || '正在启动工作台…' }}</p></div>
+  <CloseDialog :open="closeDialog" @cancel="closeDialog = false" @tray="background" @quit="exitApp"/>
 </template>

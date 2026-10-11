@@ -8,8 +8,8 @@ import (
 )
 
 // Executable returns the absolute directory containing the running executable.
-// Engineer and Site use this directory as their portable data root so launching
-// them from another working directory does not redirect generated files.
+// Engineer and Site use this directory for package assets and initial YAML
+// templates, independently of the working directory and machine-local state.
 func Executable() (string, error) {
 	executable, err := os.Executable()
 	if err != nil {

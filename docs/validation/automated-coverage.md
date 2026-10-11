@@ -22,6 +22,9 @@ go vet ./...
 | `internal/protocol` | Session framing、Control 消息和错误码 |
 | `internal/config`、`internal/database`、`internal/ipam`、`internal/bootstrap` | 配置、迁移、节点登记、Token 与地址分配 |
 | `internal/control`、`internal/session`、`internal/admin` | 心跳、会话状态、超时、统计和网络变更 |
+| `internal/clientsettings`、`internal/clientstate`、`internal/desktopclient` | 应用内配置、本机加密、旧数据导入、首次启动不连接、保存后连接与串行重连 |
+| `internal/platform/windows/tray` | 原生托盘创建、激活与清理 |
+| `scripts/test_export_nas_image.py` | Docker 镜像格式、旧应用替换、持久数据隔离、Linux 执行权限，拒绝被篡改的发布文件、运行层和错误平台 |
 | `internal/overlay/clientwg`、`internal/subnet` | MuxTun、PacketMux、UDP 封装、双向校验和队列 |
 | `internal/subnetgateway` | gVisor TCP/UDP/ICMP、flow 管理和会话隔离 |
 | Windows 平台、身份及命令入口测试 | 路由、DPAPI、Wintun 运行库和客户端编排；平台专属测试需要对应系统 |
@@ -36,10 +39,10 @@ go vet ./...
 在 Windows PowerShell 7 中执行：
 
 ```powershell
-./scripts/build-release.ps1 -Version 1.0.8
+./scripts/build-release.ps1 -Version 1.1.0
 ```
 
-脚本执行前端检查、Go test/vet、架构与验收工具检查，再构建 Windows 客户端和 Linux 服务端，生成三个独立 ZIP 并重新解压校验。
+脚本执行三端前端检查、Go test/vet、镜像打包回归测试、架构与验收工具检查，再构建两个 Windows Wails 客户端和 Linux 服务端，生成两个 ZIP 与一个 Server Docker 镜像 `.tar.gz`。客户端重新解压校验；Server 构建目录校验完整文件清单，镜像打包器读回归档，校验配置摘要、全部镜像层摘要、应用文件与可执行权限。需要 Python 3.11+ 和已有 RemLink Server 运行镜像，参见 [镜像打包前置条件](../../deploy/docker/README.ugreen.md)。
 
 Go 检查默认针对当前操作系统；交叉编译不等于运行另一平台的测试。`go test -race` 需要目标平台支持及可用 C 编译器，应在具备条件的环境单独执行。
 

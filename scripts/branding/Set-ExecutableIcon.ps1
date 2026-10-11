@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$ExecutablePath,
-    [Parameter(Mandatory = $true)][string]$IconPath
+    [Parameter(Mandatory = $true)][string]$IconPath,
+    [string]$Version = "1.1.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -98,6 +99,17 @@ try {
     if (-not [RemLinkIconResources]::Update($handle, [IntPtr]::new(14), [IntPtr]::new(1), 0, $group, [uint32]$group.Length)) {
         throw "Cannot write icon group: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
     }
+    $manifestVersion = ($Version -split '-')[0] + '.0'
+    $manifest = @"
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity type="win32" name="RemLink.Desktop" version="$manifestVersion" processorArchitecture="amd64"/>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3"><security><requestedPrivileges><requestedExecutionLevel level="requireAdministrator" uiAccess="false"/></requestedPrivileges></security></trustInfo>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3"><windowsSettings><dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2, PerMonitor</dpiAwareness></windowsSettings></application>
+</assembly>
+"@
+    $manifestBytes = [Text.UTF8Encoding]::new($false).GetBytes($manifest)
+    if (-not [RemLinkIconResources]::Update($handle, [IntPtr]::new(24), [IntPtr]::new(1), 0, $manifestBytes, [uint32]$manifestBytes.Length)) { throw 'Cannot write the desktop administrator manifest' }
     if (-not [RemLinkIconResources]::Finish($handle, $false)) {
         throw "Cannot commit icon resources: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
     }

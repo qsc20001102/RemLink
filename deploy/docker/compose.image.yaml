@@ -1,6 +1,6 @@
 services:
   server:
-    image: remlink/server:1.0.8
+    image: remlink/server:1.1.0
     platform: linux/amd64
     pull_policy: never
     restart: unless-stopped

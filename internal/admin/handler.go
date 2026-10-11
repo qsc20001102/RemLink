@@ -163,7 +163,7 @@ func Handler(config HandlerConfig) (http.Handler, error) {
 			return
 		}
 		config.Control.ResetNodeConnection(nodeID, "Node revoked")
-		recordAdminEvent(request.Context(), config.Store, nodeID, 0, "节点已撤销", nil)
+		recordAdminEvent(request.Context(), config.Store, nodeID, 0, "节点已撤销", map[string]any{"node_name": node.Name})
 		writer.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET /api/v1/admin/sessions", func(writer http.ResponseWriter, request *http.Request) {

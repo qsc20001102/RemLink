@@ -6,13 +6,15 @@ RemLink 是面向工业现场的 IPv4 远程接入系统，让 Windows 工程师
 | --- | --- | --- |
 | Server | Linux amd64 | 节点注册、地址分配、内核 WireGuard 中心转发、会话调度和 Web 管理 |
 | Engineer | Windows amd64，管理员权限 | Wails 图形界面，选择现场并设置远程 CIDR，创建和断开会话 |
-| Site | Windows amd64，管理员权限 | 控制台程序，通过 gVisor netstack 和本机套接字访问现场网络 |
+| Site | Windows amd64，管理员权限 | Wails 图形界面，配置服务器、展示连接状态，通过 gVisor netstack 访问现场网络 |
 
 ```text
 Engineer → WireGuard → Server → WireGuard → Site → 现场 LAN
 ```
 
 每个 Windows 节点使用一个 `RemLink` Wintun 适配器。Engineer 同时只允许一个非终态会话；一个 Site 可服务多个 Engineer，不同 Site 可以使用相同现场网段。现场设备无需配置返回 Overlay 的路由，但 Site 本机必须有通往目标网段的直连或明确非默认路由。
+
+Windows 节点的身份、应用内设置和现场网段保存在 `%ProgramData%\RemLink\Engineer`、`%ProgramData%\RemLink\Site`，同一电脑换包继续沿用。新电脑打开先配置服务器地址、设备名称和 Join Token，保存后连接；以后自动连接。旧版身份仍在包内时，在原目录启动一次新版以导入旧数据。两端均可隐藏到系统托盘运行。
 
 当前支持 IPv4 TCP、单播 UDP 和 ICMP Echo。架构约束与协议见 [实施规格](specs/spec.md)。
 
@@ -50,30 +52,32 @@ go vet ./...
 
 ## 打包
 
-在源码根目录双击 `build-all.bat` 即可一键构建并压缩三端，版本保持 `1.0.8`。脚本使用 PowerShell 7，需要 Git、Go 和 Node.js/npm；它会执行现有发布脚本的检查、构建与 ZIP 解压校验，完成或失败后保留窗口显示结果。
+在源码根目录双击 `build-all.bat` 即可一键构建三端 1.1.0，Engineer、Site 输出 ZIP，Server 输出可直接导入 Docker / NAS / 1Panel 的完整镜像 `.tar.gz`。脚本使用 PowerShell 7、Git、Go、Node.js/npm 和 Python 3.11+；执行前端、Go、架构检查、客户端压缩包校验以及 Server 镜像配置、镜像层和应用文件摘要校验，完成或失败后保留窗口。
 
-每次运行输出到独立目录 `dist/releases/v1.0.8-时间戳/`，包含 Engineer、Site、Server 三个 ZIP 及对应发布目录，不会覆盖之前的包或运行身份。该 BAT 在本机打包，不执行远程部署。命令行或自动化环境可使用 `build-all.bat --no-pause`。
+首次打包前，将已有 RemLink Server Docker 镜像归档放到 `dist/runtime/remlink-server-runtime-amd64.tar.gz`，或通过环境变量 `REMLINK_RUNTIME_IMAGE` 指定路径。打包复用其 Debian 与系统工具层，丢弃旧应用层，写入本次编译的 1.1.0 服务端；本机无需 Docker。镜像归档不随源码提交，更新系统依赖的方法见 [绿联 NAS 部署说明](deploy/docker/README.ugreen.md)。
 
-生成三个独立发布 ZIP：
+每次运行输出到独立目录 `dist/releases/v1.1.0-时间戳/`，包含两个 ZIP、一个 Server 镜像 `.tar.gz` 和 SHA256、`compose.yaml`、`server.example.yaml`、`README-Server.md` 及构建目录，不覆盖原包或运行身份。命令行或自动化可使用 `build-all.bat --no-pause`。
+
+生成三个独立发布包：
 
 ```powershell
-./scripts/build-release.ps1 -Version 1.0.8
+./scripts/build-release.ps1 -Version 1.1.0
 ```
 
 输出到 `dist`：
 
 ```text
-RemLink-Engineer-v1.0.8-windows-amd64.zip
-RemLink-Site-v1.0.8-windows-amd64.zip
-RemLink-Server-v1.0.8-linux-amd64.zip
+RemLink-Engineer-v1.1.0-windows-amd64.zip
+RemLink-Site-v1.1.0-windows-amd64.zip
+remlink-server-1.1.0-amd64.tar.gz
 ```
 
-版本可通过 `-Version` 修改，输出位置可通过 `-OutputDirectory` 修改。每个发布目录包含 `BUILD-INFO.json` 和 `SHA256SUMS.txt`。Engineer 构建使用 Wails 必需的 `desktop,production` 标签。
+版本可通过 `-Version` 修改，输出位置可通过 `-OutputDirectory` 修改，运行镜像可通过 `-RuntimeImagePath` 指定。每个构建目录包含 `BUILD-INFO.json` 和 `SHA256SUMS.txt`。Engineer、Site 构建使用 Wails 必需的 `desktop,production` 标签。Server 镜像用 `docker load -i remlink-server-1.1.0-amd64.tar.gz` 导入，升级沿用原 `server.yaml` 和 `data` 挂载。
 
 只生成 Engineer 和 Site 的未压缩目录：
 
 ```powershell
-./scripts/build-release.ps1 -Version 1.0.8 -Roles Engineer,Site -SkipArchive -OutputDirectory dist/optimized-v1.0.8
+./scripts/build-release.ps1 -Version 1.1.0 -Roles Engineer,Site -SkipArchive -OutputDirectory dist/optimized-v1.1.0
 ```
 
 输出目录若含身份、现场网段或日志等运行数据，脚本会停止，需改用其他输出目录。
@@ -81,7 +85,7 @@ RemLink-Server-v1.0.8-linux-amd64.zip
 生成供服务器构建的 Docker 上下文 TAR：
 
 ```powershell
-./scripts/build-docker-package.ps1 -Version 1.0.8
+./scripts/build-docker-package.ps1 -Version 1.1.0
 ```
 
 构建上下文 TAR 需要解压并执行 `build.sh`。可直接导入的镜像 `tar.gz` 则由 `scripts/export-nas-image.py` 生成，它需要已有 RemLink 镜像的运行依赖层；具体前置条件和命令见绿联 NAS 部署说明。
@@ -92,7 +96,7 @@ RemLink-Server-v1.0.8-linux-amd64.zip
 | --- | --- |
 | `cmd/server`、`cmd/engineer`、`cmd/site` | 三端程序入口 |
 | `internal` | 配置、身份、数据库、组网、会话和现场网关 |
-| `frontend/engineer`、`frontend/server` | Vue 前端 |
+| `frontend/engineer`、`frontend/site`、`frontend/server` | Vue 前端 |
 | `config/*.example.yaml` | 三端配置模板 |
 | `deploy/docker` | Dockerfile、Compose、预检和部署说明 |
 | `scripts` | 打包、图标、仓库检查和验收工具 |

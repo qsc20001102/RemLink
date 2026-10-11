@@ -1,3 +1,5 @@
+//go:build windows
+
 package main
 
 import (
@@ -5,21 +7,23 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
-	"syscall"
-	"time"
 
+	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/options"
+	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+
+	siteui "remlink/frontend/site"
 	"remlink/internal/appdir"
-	"remlink/internal/config"
+	"remlink/internal/clientsettings"
+	"remlink/internal/clientstate"
 	"remlink/internal/identity"
 	"remlink/internal/logging"
 	"remlink/internal/model"
 	"remlink/internal/nodeagent"
+	"remlink/internal/platform/windows/dpapi"
 	"remlink/internal/version"
 )
-
-const joinTokenEnvironment = "REMLINK_JOIN_TOKEN"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -29,50 +33,46 @@ func main() {
 }
 
 func run(arguments []string) error {
-	defaultConfigPath, err := appdir.Join("site.yaml")
-	if err != nil {
-		return err
-	}
 	flags := flag.NewFlagSet("remlink-site", flag.ContinueOnError)
-	configPath := flags.String("config", defaultConfigPath, "Site YAML configuration path")
-	joinToken := flags.String("join-token", os.Getenv(joinTokenEnvironment), "registration/reconfiguration Join Token (CLI/environment override YAML)")
+	configPath := flags.String("config", "", "import a legacy Site YAML configuration")
 	identityPath := flags.String("identity", "", "override DPAPI identity path")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
-	clientConfig, err := config.LoadSite(*configPath)
+	paths, err := clientstate.PrepareDesktop(model.NodeTypeSite, *configPath, *identityPath)
 	if err != nil {
 		return err
 	}
-	resolvedJoinToken := config.ResolveJoinToken(*joinToken, clientConfig.JoinToken)
-	if *identityPath == "" {
-		*identityPath, err = identity.DefaultPath(model.NodeTypeSite)
-		if err != nil {
-			return err
-		}
+	defer paths.Close()
+	settingsStore, err := clientsettings.NewStore(paths.Settings, model.NodeTypeSite, dpapi.Protector{})
+	if err != nil {
+		return err
 	}
-	applicationLogger, err := logging.New(logging.DefaultConfig(filepath.Join(filepath.Dir(*identityPath), "logs", "site.jsonl")))
+	identityStore, err := identity.NewStore(paths.Identity, dpapi.Protector{})
+	if err != nil {
+		return err
+	}
+	applicationLogger, err := logging.New(logging.DefaultConfig(filepath.Join(paths.Logs, "site.jsonl")))
 	if err != nil {
 		return err
 	}
 	defer applicationLogger.Close()
 	logger, _ := applicationLogger.For(logging.ModuleCore)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	logger.Info("RemLink Site 正在启动", "version", version.String())
-	console := newSiteConsole(os.Stdout)
-	console.Header(clientConfig.Server, clientConfig.NodeName, version.String())
-	return nodeagent.Run(ctx, nodeagent.Options{
-		NodeType: model.NodeTypeSite, NodeName: clientConfig.NodeName,
-		ServerURL: clientConfig.Server, JoinToken: resolvedJoinToken, IdentityPath: *identityPath,
-		Version: version.String(), Logger: logger, ApplicationLogger: applicationLogger,
-		TCPFlowLimit:   clientConfig.Netstack.TCPFlowLimit,
-		UDPFlowLimit:   clientConfig.Netstack.UDPFlowLimit,
-		UDPIdleTimeout: time.Duration(clientConfig.Netstack.UDPIdleSeconds) * time.Second,
-		OnOverlayReady: console.OverlayReady,
-		OnControlState: console.ControlState,
-		OnSiteReady:    console.SiteReady,
-		OnSession:      console.Session,
-		OnRoute:        console.Route,
-	})
+	app := NewSiteApp(nodeagent.Options{NodeType: model.NodeTypeSite, IdentityPath: paths.Identity,
+		Version: version.String(), Logger: logger, ApplicationLogger: applicationLogger}, settingsStore, identityStore)
+	iconPath, err := appdir.Join("RemLinkSite.ico")
+	if err != nil {
+		return err
+	}
+	return wails.Run(&options.App{Title: "RemLink Site", Width: 1150, Height: 800, MinWidth: 900, MinHeight: 650,
+		BackgroundColour: &options.RGBA{R: 247, G: 248, B: 252, A: 255},
+		AssetServer:      &assetserver.Options{Assets: siteui.Assets}, OnStartup: app.Startup, OnShutdown: app.Shutdown,
+		OnDomReady: func(ctx context.Context) {
+			if err := app.window.Start(ctx, "RemLink Site", iconPath); err != nil {
+				app.appendLog("ERROR", err.Error())
+				app.emit()
+			}
+		},
+		OnBeforeClose: app.window.BeforeClose,
+		Bind:          []interface{}{app}})
 }

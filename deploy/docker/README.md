@@ -2,7 +2,7 @@
 
 绿联 NAS 直接导入 `tar.gz` 镜像见 [绿联 NAS 镜像导入](README.ugreen.md)。镜像归档包含完整运行环境，无需在 NAS 上构建。
 
-1Panel 上传构建包部署见 [1Panel 构建与更新](README.1panel.md)。源码根目录执行 `./scripts/build-docker-package.ps1 -Version 1.0.8` 生成 TAR，上传服务器解压后执行 `sh build.sh`。本机不需要 Docker 或 WSL。
+1Panel 上传构建包部署见 [1Panel 构建与更新](README.1panel.md)。源码根目录执行 `./scripts/build-docker-package.ps1 -Version 1.1.0` 生成 TAR，上传服务器解压后执行 `sh build.sh`。本机不需要 Docker 或 WSL。
 
 完整生产流程见 `docs/deployment-and-usage.md`；在源码仓库中该文件位于 `../../docs/deployment-and-usage.md`，在发布包中位于 `../docs/deployment-and-usage.md`。
 
@@ -10,7 +10,7 @@ Compose 基线删除全部 Linux capability 后只增加 `NET_ADMIN`，映射 `/
 
 ## 从发布包部署
 
-在解压后的 `RemLink-Server-v1.0.8-linux-amd64/docker` 目录（其他版本按包名调整）：
+在解压后的 `RemLink-Server-v1.1.0-linux-amd64/docker` 目录（其他版本按包名调整）：
 
 ~~~bash
 cp .env.example .env

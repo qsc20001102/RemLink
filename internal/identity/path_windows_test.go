@@ -6,17 +6,18 @@ import (
 	"path/filepath"
 	"testing"
 
-	"remlink/internal/appdir"
+	"golang.org/x/sys/windows"
+
 	"remlink/internal/model"
 )
 
-func TestDefaultPathUsesExecutableDirectoryForPortableRoles(t *testing.T) {
-	root, err := appdir.Executable()
+func TestDefaultPathUsesSeparateMachineDirectories(t *testing.T) {
+	root, err := windows.KnownFolderPath(windows.FOLDERID_ProgramData, windows.KF_FLAG_DEFAULT)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(root, "identity.json")
-	for _, role := range []model.NodeType{model.NodeTypeEngineer, model.NodeTypeSite} {
+	for role, name := range map[model.NodeType]string{model.NodeTypeEngineer: "Engineer", model.NodeTypeSite: "Site"} {
+		want := filepath.Join(root, "RemLink", name, "identity.json")
 		got, err := DefaultPath(role)
 		if err != nil {
 			t.Fatalf("DefaultPath(%s): %v", role, err)
@@ -29,6 +30,6 @@ func TestDefaultPathUsesExecutableDirectoryForPortableRoles(t *testing.T) {
 
 func TestDefaultPathRejectsUnknownRole(t *testing.T) {
 	if _, err := DefaultPath(model.NodeType("server")); err == nil {
-		t.Fatal("DefaultPath accepted a non-portable role")
+		t.Fatal("DefaultPath accepted an unknown Windows role")
 	}
 }

@@ -1,18 +1,18 @@
 # 绿联 NAS 镜像导入
 
-`remlink-server-1.0.8-amd64.tar.gz` 是完整的 Docker 镜像归档，包含 Debian、WireGuard 工具、服务端和内嵌管理页。根目录为 `manifest.json`、镜像配置 JSON，以及各层的 `layer.tar`。无需在 NAS 上安装 Go、Node 或构建镜像。
+`remlink-server-1.1.0-amd64.tar.gz` 是完整的 Docker 镜像归档，包含 Debian、WireGuard 工具、服务端和内嵌管理页。根目录为 `manifest.json`、镜像配置 JSON，以及各层的 `layer.tar`。无需在 NAS 上安装 Go、Node 或构建镜像。
 
-镜像标签为 `remlink/server:1.0.8`，架构为 `linux/amd64`，用于 Intel / AMD x86-64 NAS。
+镜像标签为 `remlink/server:1.1.0`，架构为 `linux/amd64`，用于 Intel / AMD x86-64 NAS。
 
 ## 导入和启动
 
-1. 把 `remlink-server-1.0.8-amd64.tar.gz` 上传到 NAS，在 Docker 应用的镜像导入功能中选择该文件。导入后选择 `remlink/server:1.0.8`。
+1. 把 `remlink-server-1.1.0-amd64.tar.gz` 上传到 NAS，在 Docker 应用的镜像导入功能中选择该文件。导入后选择 `remlink/server:1.1.0`。
 2. 在 NAS 的部署目录放入真正的 `server.yaml` 文件，可从随附的 `server.example.yaml` 复制。修改 `server.wg_endpoint` 为客户端可达的 NAS 公网域名/IP 与 UDP 端口，修改 `server.admin_token` 为自己的管理令牌。局域网测试可先使用 NAS 局域网 IP。创建 `data` 文件夹。
 3. 使用随附的 `compose.yaml` 创建项目；相对路径以项目目录为准。也可手动创建容器，按下表设置。
 
 | 设置 | 值 |
 | --- | --- |
-| 镜像 | `remlink/server:1.0.8`，使用本地镜像，禁止强制拉取 |
+| 镜像 | `remlink/server:1.1.0`，使用本地镜像，禁止强制拉取 |
 | TCP 端口映射 | NAS `8080` → 容器 `8080`，NAS 端口可按需调整 |
 | UDP 端口映射 | NAS `51820` → 容器 `51820` |
 | 配置文件挂载 | NAS 上的 `server.yaml` → `/etc/remlink/server.yaml`，只读 |
@@ -40,9 +40,9 @@
 在 NAS 上也可通过 SSH 执行：
 
 ```sh
-sha256sum -c remlink-server-1.0.8-amd64.tar.gz.sha256
-docker load -i remlink-server-1.0.8-amd64.tar.gz
-docker image inspect remlink/server:1.0.8 --format '{{.Os}}/{{.Architecture}}'
+sha256sum -c remlink-server-1.1.0-amd64.tar.gz.sha256
+docker load -i remlink-server-1.1.0-amd64.tar.gz
+docker image inspect remlink/server:1.1.0 --format '{{.Os}}/{{.Architecture}}'
 # 以下命令在 compose.yaml、server.yaml 和 data 所在目录执行
 docker compose -f compose.yaml up -d --pull never
 docker compose -f compose.yaml exec server remlink-server -config /etc/remlink/server.yaml -healthcheck
@@ -52,11 +52,20 @@ Docker 官方支持直接加载 gzip 压缩的镜像 TAR：[docker image load](h
 
 ## 维护者重新打包
 
-在源码根目录使用 PowerShell 7、Python 3.10+、Go 和 Node.js：
+在源码根目录使用 PowerShell 7、Python 3.11+、Go 和 Node.js。`build-all.bat` 默认生成完整镜像；首次构建前，将已有 RemLink Docker 镜像 TAR.GZ 放到 `dist/runtime/remlink-server-runtime-amd64.tar.gz`。也可指定其他路径：
 
 ```powershell
-./scripts/build-docker-package.ps1 -Version 1.0.8 -OutputDirectory dist/nas-image-build
-python scripts/export-nas-image.py --runtime-image dist/remlink-server-1.0.8-image.tar --context dist/nas-image-build/RemLink-Server-v1.0.8-docker-build --output dist/remlink-server-1.0.8-amd64.tar.gz
+$env:REMLINK_RUNTIME_IMAGE = "C:/releases/remlink-server-1.0.8-amd64.tar.gz"
+./build-all.bat --no-pause
+```
+
+仅打包 Server 可执行 `./scripts/build-release.ps1 -Roles Server -RuntimeImagePath "C:/releases/remlink-server-1.0.8-amd64.tar.gz" -OutputDirectory dist/server-rebuild`。两种入口均编译当前版本，复用旧镜像运行层，并生成镜像、SHA256 和部署文件。
+
+也可分步生成构建上下文再导出镜像：
+
+```powershell
+./scripts/build-docker-package.ps1 -Version 1.1.0 -OutputDirectory dist/nas-image-build
+python scripts/export-nas-image.py --runtime-image dist/remlink-server-1.1.0-image.tar --context dist/nas-image-build/RemLink-Server-v1.1.0-docker-build --output dist/remlink-server-1.1.0-amd64.tar.gz
 ```
 
 第一步执行前端类型检查、生产构建、Go 测试和 vet，再编译当前 Linux 服务端。第二步复用已有 RemLink 镜像的 Debian 与系统依赖层，丢弃旧应用层，写入本次编译的服务端、预检脚本和第三方声明，输出可导入的镜像归档及 SHA256。配置与持久数据通过挂载提供。

@@ -80,7 +80,8 @@ func ErrorMessage(value string) string {
 	}{
 		{"administrator privileges are required to manage the RemLink Wintun adapter", "需要以管理员身份运行，才能管理 RemLink Wintun 网卡"},
 		{"decrypt WireGuard private key: unprotect secret with DPAPI", "无法解密 WireGuard 私钥：identity.json 不是由当前 Windows 系统生成，需重新注册节点"},
-		{"Join Token is required for first registration", "首次注册需要在 YAML 中填写 Join Token"},
+		{"Join Token is required for first registration", "首次注册请在设置页面填写 Join Token"},
+		{"JOIN_TOKEN_INVALID", "Join Token 无效或已过期，请在设置页面更新"},
 		{"configured Server URL differs from persisted Node identity", "YAML 中的 Server URL 与已保存的节点身份不一致"},
 		{"Site has no route to Remote CIDR", "现场端没有通往远程网段的明确路由"},
 		{"Engineer Session runtime is not ready", "Engineer 会话运行时尚未就绪"},

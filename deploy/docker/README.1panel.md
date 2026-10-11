@@ -1,31 +1,31 @@
 # 1Panel 构建与更新
 
-交付物为 `RemLink-Server-v1.0.8-docker-build.tar`，包含预编译 Linux amd64 服务端（内嵌 Web 前端）、Dockerfile、构建脚本、编排和配置示例。这是构建上下文，不是镜像归档，不能直接用于 1Panel 的“镜像导入”。
+交付物为 `RemLink-Server-v1.1.0-docker-build.tar`，包含预编译 Linux amd64 服务端（内嵌 Web 前端）、Dockerfile、构建脚本、编排和配置示例。这是构建上下文，不是镜像归档，不能直接用于 1Panel 的“镜像导入”。
 
 ## 本机打包（维护者）
 
 在源码根目录使用 PowerShell 7、Go、Node.js 和 Git：
 
 ```powershell
-./scripts/build-docker-package.ps1 -Version 1.0.8
+./scripts/build-docker-package.ps1 -Version 1.1.0
 ```
 
-本机不需要 Docker Desktop 或 WSL。脚本运行前端类型检查、生产构建、Go 测试和 vet，再交叉编译服务端，输出 `dist/RemLink-Server-v1.0.8-docker-build.tar` 及 SHA256。同名输出目录已存在时可用 `-OutputDirectory dist/rebuild` 指定另一个输出位置，避免混入过期文件。
+本机不需要 Docker Desktop 或 WSL。脚本运行前端类型检查、生产构建、Go 测试和 vet，再交叉编译服务端，输出 `dist/RemLink-Server-v1.1.0-docker-build.tar` 及 SHA256。同名输出目录已存在时可用 `-OutputDirectory dist/rebuild` 指定另一个输出位置，避免混入过期文件。
 
 ## 服务器构建
 
 上传 tar 到服务器，在终端执行：
 
 ```sh
-tar -xf RemLink-Server-v1.0.8-docker-build.tar
-cd RemLink-Server-v1.0.8-docker-build
+tar -xf RemLink-Server-v1.1.0-docker-build.tar
+cd RemLink-Server-v1.1.0-docker-build
 sha256sum -c SHA256SUMS.txt
 sh build.sh
 ```
 
-镜像标签为 `remlink/server:1.0.8`，无时间戳和提交号后缀。其他发布版本由打包参数决定，实际标签见包内 `image.txt` 和 `compose.yaml`。
+镜像标签为 `remlink/server:1.1.0`，无时间戳和提交号后缀。其他发布版本由打包参数决定，实际标签见包内 `image.txt` 和 `compose.yaml`。
 
-也可在 1Panel 镜像构建界面选择解压目录的 `Dockerfile`，构建上下文为该解压目录，镜像名称填写 `remlink/server:1.0.8`。
+也可在 1Panel 镜像构建界面选择解压目录的 `Dockerfile`，构建上下文为该解压目录，镜像名称填写 `remlink/server:1.1.0`。
 
 构建需要联网下载 Debian 基础镜像及系统依赖；服务器不需要 Go 或 Node。`build.sh` 默认使用清华 Debian 主仓库和安全仓库，强制 IPv4。可通过 shell 环境变量 `REMLINK_APT_FORCE_IPV4`、`REMLINK_APT_DEBIAN_MIRROR`、`REMLINK_APT_SECURITY_MIRROR` 覆盖；把两个镜像变量显式设为空可使用官方源。脚本不会自动读取编排的 `.env`。在 1Panel 界面直接构建时，Dockerfile 默认使用官方源，可另行设置 `APT_*` 构建参数。
 
@@ -40,7 +40,7 @@ sh build.sh
 └── data/                # 原数据库、密钥和日志目录
 ```
 
-构建完成后，在 1Panel 编辑原编排，使用包内 `compose.yaml` 的内容。它没有 `build`，镜像是 `remlink/server:1.0.8`，并使用 `pull_policy: never`。不要启用强制拉取。
+构建完成后，在 1Panel 编辑原编排，使用包内 `compose.yaml` 的内容。它没有 `build`，镜像是 `remlink/server:1.1.0`，并使用 `pull_policy: never`。不要启用强制拉取。
 
 挂载保持：
 

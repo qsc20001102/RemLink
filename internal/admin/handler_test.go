@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -177,6 +178,19 @@ func TestAdminHandlerAuthNodeUpdateLogsAndRotateOnly(t *testing.T) {
 		t.Fatalf("reading network rotated Join Token or changed it: %s", view.Body.String())
 	}
 
+	if err := store.CreateNode(ctx, model.Node{
+		ID: "site", Type: model.NodeTypeSite, Name: "Site", OverlayIP: netip.MustParseAddr("10.88.0.3"),
+		WGPublicKey: "site-key", NodeTokenHash: []byte("site-hash"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	historyID := uint64(18446744073709551614)
+	if err := store.CreateSession(ctx, model.Session{
+		ID: historyID, EngineerNodeID: "engineer", SiteNodeID: "site", Status: model.SessionClosed,
+		CreatedAt: time.Now().Add(-30 * 24 * time.Hour).UTC(), CIDRs: []netip.Prefix{netip.MustParsePrefix("192.168.13.0/24")},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	deleted := adminRequest(t, handler, http.MethodDelete, "/api/v1/admin/nodes/engineer", nil)
 	if deleted.Code != http.StatusNoContent || peers.removed != 1 || sessions.nodeDisconnects != 2 || controlNetwork.resetNodeCount != 2 || controlNetwork.resetReason != "Node revoked" {
 		t.Fatalf("DELETE status=%d peer removals=%d disconnects=%d resets=%d reason=%s",
@@ -184,6 +198,13 @@ func TestAdminHandlerAuthNodeUpdateLogsAndRotateOnly(t *testing.T) {
 	}
 	if _, err := store.GetNode(ctx, "engineer"); err == nil {
 		t.Fatal("deleted Node remains in the registry")
+	}
+	historyResponse := adminRequest(t, handler, http.MethodGet,
+		"/api/v1/admin/sessions?kind=history&limit=500&session_id="+strconv.FormatUint(historyID, 10), nil)
+	var history []model.Session
+	if err := json.Unmarshal(historyResponse.Body.Bytes(), &history); err != nil || historyResponse.Code != http.StatusOK ||
+		len(history) != 1 || history[0].ID != historyID || len(history[0].CIDRs) != 1 {
+		t.Fatalf("history after Node revocation: status=%d body=%s error=%v", historyResponse.Code, historyResponse.Body.String(), err)
 	}
 }
 

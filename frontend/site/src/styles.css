@@ -1,0 +1,5 @@
+.site-status-panel dl { margin: 0; display: grid; grid-template-columns: 140px minmax(0,1fr); gap: 18px 24px; padding: 25px 28px; font-size: 13px; }
+.site-status-panel dt { color: var(--muted); }.site-status-panel dd { margin: 0; color: #29405f; overflow-wrap: anywhere; }
+.site-app .connection-path .server-endpoint small { max-width: 360px; overflow-wrap: anywhere; }
+.site-sessions .empty-state { min-height: 145px; }.site-sessions table { width: 100%; }
+@media(max-width:600px) { .site-status-panel dl { grid-template-columns: 105px minmax(0,1fr); gap: 16px; padding: 20px 18px; font-size: 12px; } }

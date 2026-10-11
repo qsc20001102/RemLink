@@ -30,9 +30,9 @@ type SiteConfig struct {
 }
 
 type SiteNetstackConfig struct {
-	TCPFlowLimit   int `yaml:"tcp_flow_limit"`
-	UDPFlowLimit   int `yaml:"udp_flow_limit"`
-	UDPIdleSeconds int `yaml:"udp_idle_seconds"`
+	TCPFlowLimit   int `yaml:"tcp_flow_limit" json:"tcpFlowLimit"`
+	UDPFlowLimit   int `yaml:"udp_flow_limit" json:"udpFlowLimit"`
+	UDPIdleSeconds int `yaml:"udp_idle_seconds" json:"udpIdleSeconds"`
 }
 
 // LoadEngineer loads and validates a strict Engineer YAML file.

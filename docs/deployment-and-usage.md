@@ -21,12 +21,12 @@ Server 需要 Linux amd64、内核 WireGuard。Docker 部署还需 `/dev/net/tun
 
 | 发布物 | 用法 |
 | --- | --- |
-| `remlink-server-1.0.8-amd64.tar.gz` | 完整镜像归档，Docker 镜像导入或 `docker load`；用 `compose.image.yaml` / 随附 `compose.yaml` 启动 |
-| `RemLink-Server-v1.0.8-docker-build.tar` | 预编译构建上下文，解压后执行 `sh build.sh`，再用随附 `compose.yaml` 启动 |
-| `RemLink-Server-v1.0.8-linux-amd64.zip` | Linux 二进制和 Docker 部署目录；用包内 `docker/compose.release.yaml` 构建运行镜像 |
+| `remlink-server-1.1.0-amd64.tar.gz` | 完整镜像归档，Docker 镜像导入或 `docker load`；用 `compose.image.yaml` / 随附 `compose.yaml` 启动 |
+| `RemLink-Server-v1.1.0-docker-build.tar` | 预编译构建上下文，解压后执行 `sh build.sh`，再用随附 `compose.yaml` 启动 |
+| `RemLink-Server-v1.1.0-linux-amd64/` | 构建中间目录，包含 Linux 二进制和 Docker 部署文件；通过 `-SkipArchive` 可单独生成 |
 | 源码仓库 | 在 `deploy/docker` 用 `compose.yaml` 构建前端、Go 服务端和运行镜像 |
 
-上述版本号为示例；部署时以交付物标签为准。绿联 NAS 与 1Panel 的详细步骤在源码的 `deploy/docker/README.ugreen.md`、`README.1panel.md`；Server ZIP 中对应目录为 `docker`。
+`build-all.bat` 默认生成第一行的完整 Docker 镜像归档。上述版本号为示例；部署时以交付物标签为准。详细步骤见随附 `README-Server.md`，或源码的 `deploy/docker/README.ugreen.md`。构建上下文流程见 `README.1panel.md`。
 
 ### 配置
 
@@ -61,8 +61,8 @@ Docker 挂载配置文件到 `/etc/remlink/server.yaml`（只读），挂载原 
 在镜像压缩包所在目录导入：
 
 ```sh
-sha256sum -c remlink-server-1.0.8-amd64.tar.gz.sha256
-docker load -i remlink-server-1.0.8-amd64.tar.gz
+sha256sum -c remlink-server-1.1.0-amd64.tar.gz.sha256
+docker load -i remlink-server-1.1.0-amd64.tar.gz
 ```
 
 将随附的 `compose.yaml`、配置和数据放在固定部署目录，例如 `/opt/remlink`：
@@ -89,20 +89,20 @@ docker compose -f compose.yaml exec server remlink-server -config /etc/remlink/s
 
 `server.example.yaml` 来自随附部署文件。`server.yaml` 必须预先存在且是文件。镜像已包含启动命令和健康检查；Compose 使用本地镜像。
 
-### 使用构建上下文或 Server ZIP
+### 使用构建上下文或未压缩构建目录
 
 构建上下文 TAR：
 
 ```sh
-tar -xf RemLink-Server-v1.0.8-docker-build.tar
-cd RemLink-Server-v1.0.8-docker-build
+tar -xf RemLink-Server-v1.1.0-docker-build.tar
+cd RemLink-Server-v1.1.0-docker-build
 sha256sum -c SHA256SUMS.txt
 sh build.sh
 ```
 
 然后在部署目录使用随附 `compose.yaml`、`server.example.yaml`，按“使用已有镜像”流程启动。
 
-Server ZIP 解压后，在包内 `docker` 目录编辑 `server.yaml` 并创建数据目录：
+通过 `-SkipArchive` 生成的 Server 构建目录，可在其 `docker` 目录编辑 `server.yaml` 并创建数据目录：
 
 ```sh
 mkdir -p data
@@ -127,7 +127,7 @@ docker compose -f compose.yaml exec server remlink-server -config /etc/remlink/s
 
 ### 原生 Linux
 
-如果直接运行 Server ZIP 中的 `linux-amd64/remlink-server`，安装 `ca-certificates`、`iproute2`、`iptables` 和 `wireguard-tools`。将配置的 `data.directory` 改为实际持久目录，例如 `/var/lib/remlink`。进程需要管理内核 WireGuard 与转发规则的权限：
+如果直接运行未压缩构建目录中的 `linux-amd64/remlink-server`，安装 `ca-certificates`、`iproute2`、`iptables` 和 `wireguard-tools`。将配置的 `data.directory` 改为实际持久目录，例如 `/var/lib/remlink`。进程需要管理内核 WireGuard 与转发规则的权限：
 
 ```sh
 sudo ./linux-amd64/remlink-server -config /etc/remlink/server.yaml
@@ -137,52 +137,31 @@ sudo ./linux-amd64/remlink-server -config /etc/remlink/server.yaml
 
 ## Engineer 和 Site
 
-将两个 Windows ZIP 分别解压到可持续写入的独立目录，例如 `C:\RemLink\Engineer` 和 `C:\RemLink\Site`。它们的默认配置路径以 EXE 所在目录为准。
+两端都是 Windows 桌面应用，分别解压到独立目录。双击 `RemLinkEngineer.exe` 或 `RemLinkSite.exe` 后授予管理员权限；这个权限用于管理 RemLink 网卡、路由和本机数据。
 
-Engineer 的 `engineer.yaml`：
+新电脑第一次打开会进入“设置”。填写 Server 公网地址、Engineer / Site 名称和 Join Token，点击“保存并连接”。未完成配置时程序不会联系 Server；保存后会自动尝试连接。已配置的电脑下次打开会自动读取本机数据连接。
 
-```yaml
-server: "https://remlink.example.com"
-node_name: "Engineer-Shanghai-01"
-join_token: "粘贴从 Server 获取的 Join Token"
-```
+地址使用完整 HTTP/HTTPS 根地址，例如 `https://remlink.example.com` 或 `http://192.0.2.10:8080`，不带额外路径、查询参数或用户名密码。注册及修改服务器、同步名称需要有效 Join Token。两端都可以在“设置”修改这些信息，名称为第一项；服务器地址与 Join Token 始终遮挡，没有显示按钮。Engineer 的“设置”还提供“打开配置存储目录”。保存时先停止旧运行时、清理本地网络，再连接新配置；连接失败会显示原因，可修改设置或重试。
 
-Site 的 `site.yaml`：
+Site 只有“连接”和“设置”两页。“连接”显示服务器、Overlay 地址、控制通道、现场网络是否就绪、当前工程师接入和运行日志。Site 不填写现场远程 CIDR，网段由 Engineer 在创建会话时下发。
 
-```yaml
-server: "https://remlink.example.com"
-node_name: "Site-Qingdao-01"
-join_token: "粘贴从 Server 获取的 Join Token"
-netstack:
-  tcp_flow_limit: 2048
-  udp_flow_limit: 4096
-  udp_idle_seconds: 60
-```
+Engineer 的“连接”页中，现场选择与网段区域填满下方空间，固定保留“连接现场”和“断开连接”按钮，并显示连接进度、成功提示或失败原因。建立会话期间禁止重复连接；会话准备就绪或已连接时允许断开，断开后可重新连接。会话详情和统计集中在“会话”页。各现场网段独立保存，切换现场时自动加载。两端各页面顶部的网络状态固定显示，内容区域独立滚动。
 
-`server` 只允许 HTTP/HTTPS 根地址，不带额外路径、查询参数或用户名密码。Site 配置不填写现场 CIDR；它由 Engineer 在创建会话时下发。注册及重新配置时的 Join Token 优先级为 `-join-token`、`REMLINK_JOIN_TOKEN`、YAML `join_token`。
+点击窗口关闭按钮会提示“隐藏到托盘”“直接退出”“取消”。隐藏后网络连接继续运行；点击托盘图标可恢复窗口，右键可退出。Site 如需开机运行，用 Windows 计划任务启动 EXE 并授予最高权限，不要启动同一身份的多个进程。
 
-以管理员身份在各自目录运行：
-
-```powershell
-# 工程师电脑
-.\RemLinkEngineer.exe
-# 现场电脑
-.\RemLinkSite.exe
-```
-
-Site 控制台会显示 `OverlayIP`、`WireGuard=已连接`、`Control=已连接`，以及 `远程网段=就绪 子网网关=gVisor netstack/就绪`。Server 节点页应显示 ONLINE。全部预期节点注册后可以轮换 Join Token。
+本机数据按角色保存，通常位于 `C:\ProgramData\RemLink\Engineer` 和 `C:\ProgramData\RemLink\Site`：
 
 | 运行文件 | 作用 |
 | --- | --- |
-| `engineer.yaml` / `site.yaml` | 当前角色配置，Join Token 是明文注册及重新配置便捷项 |
-| `identity.json` | DPAPI 保护的节点身份，只能在生成它的 Windows 主机使用 |
-| `logs/engineer.jsonl` / `logs/site.jsonl` | 角色日志 |
-| `wintun.dll` | 内嵌固定版本运行库，首次释放并校验摘要 |
-| `site-profiles.json` | 仅 Engineer 使用，按 Site NodeID 保存远程 CIDR |
+| `settings.json` | 应用内保存的服务器、名称、注册令牌与 Site 容量设置；Join Token 由本机 DPAPI 加密 |
+| `identity.json` | NodeID、Node Token、WireGuard 密钥及路由清理记录；私钥和 Token 由本机 DPAPI 加密 |
+| `site-profiles.json` | 仅 Engineer，按 Site NodeID 保存远程 CIDR |
+| `logs/engineer.jsonl` / `logs/site.jsonl` | 本机角色日志 |
+| EXE 旁的 `wintun.dll` | 内嵌固定版本运行库，首次释放并校验摘要 |
 
-修改 Engineer 或 Site 的 YAML 后，退出程序并重新启动即可生效，无需删除 `identity.json`。`node_name` 会立即同步本地身份；提供当前 Server 的有效 `join_token` 后，还会同步服务器显示名称。切换 `server` 时填写新 Server 的有效 `join_token`，程序复用节点 ID 和 WireGuard 密钥自动注册，成功后更新身份文件；注册失败会保留原身份。路由清理记录会保留，Site 的 `netstack` 参数在每次启动时直接从 YAML 读取。
+旧版首次升级时先停止旧程序或旧计划任务。若身份已存入本机目录，新版会导入已有的本机 YAML；若仍在旧包中，在原目录启动一次新版以导入身份、设置及现场网段。原文件保留供回退，导入后以应用内设置为准，旧 YAML 不再更新。以后可以将新包解压到任何其他目录，本机已有数据会继续使用。
 
-Engineer 使用交互式 GUI。Site 如需开机启动，可在前台完成注册后，用 Windows 计划任务以最高权限运行 Site EXE，并指定配置文件和工作目录；不要与前台进程同时运行。
+转发软件包时无需附带本机数据目录。另一台电脑第一次打开会要求配置并创建独立节点，不会直接使用原电脑的身份。首次注册仍需有效 Join Token；Windows 重装或删除本机身份后需重新注册。
 
 ## 连接现场
 
@@ -198,6 +177,8 @@ Engineer 使用交互式 GUI。Site 如需开机启动，可在前台完成注�
 
 管理页可查看和修改节点、断开会话、修改网络参数、查看事件日志。修改 WireGuard 端口后，同时修改 YAML 的 `wg_endpoint` 端口和 Compose UDP 映射，再重新创建容器。
 
+“会话”页的历史会话默认查询所有时间内最近结束的 500 条 `CLOSED`、`FAILED` 记录，可按结束时间、节点、状态或完整会话 ID 筛选；“清空筛选”会立即重新查询。撤销节点会关闭相关会话、释放地址并使身份失效，但保留历史会话、网段和流量统计；已撤销节点在历史中显示原节点 ID。升级会自动迁移现有数据库，保留仍在库中的记录；旧版本随节点撤销删除的记录不会自动恢复。
+
 升级前停止 Server，备份原 `server.yaml` 和完整 `data`。新镜像导入后在原部署目录重新创建：
 
 ```sh
@@ -206,7 +187,7 @@ docker compose -f compose.yaml up -d --force-recreate --pull never
 
 Server 数据包含数据库 `remlink.db`、WireGuard 密钥 `server-wg.key` 和 `logs/server.jsonl`。不要用新示例覆盖原配置，也不要重新生成旧节点依赖的数据库和密钥。
 
-Windows 升级前退出对应进程，保留本端 YAML、`identity.json`、`logs`、`wintun.dll`，Engineer 还须保留 `site-profiles.json`。更换 Windows 主机时重新注册，不能跨机器复制 DPAPI 身份。
+Windows 升级前退出对应进程并备份 `%ProgramData%\RemLink\Engineer` 或 `%ProgramData%\RemLink\Site`。完成旧版首次导入后，更换软件包不需要搬运身份、配置或现场网段；这些本机数据会继续使用。更换 Windows 主机时重新注册，不能跨机器复制 DPAPI 身份。
 
 ## 常见问题
 
@@ -224,4 +205,4 @@ Windows 升级前退出对应进程，保留本端 YAML、`identity.json`、`log
 | `ENGINEER_SESSION_EXISTS` | 当前非终态会话是否已关闭 |
 | ONLINE 但业务不通 | Site 目标可达、WireGuard 握手、会话 ACTIVE、Engineer 路由和应用日志 |
 
-实机验收使用源码或 Server ZIP 中的 `docs/validation/T01-T18-runbook.md` 与 `scripts/validation` 工具。先初始化运行目录，再采证、记录结果和校验；自动化测试不能替代指定部署的真实联通结果。
+实机验收使用源码或 Server 构建目录中的 `docs/validation/T01-T18-runbook.md` 与 `scripts/validation` 工具。先初始化运行目录，再采证、记录结果和校验；自动化测试不能替代指定部署的真实联通结果。

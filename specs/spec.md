@@ -8,7 +8,7 @@
 | --- | --- |
 | Server | Linux 内核 WireGuard、IPAM、节点登记、Control、Session 调度、SQLite 和 Web 管理 |
 | Engineer | Windows Wails GUI、单 Wintun、内嵌 wireguard-go、PacketMux、自有远程路由和 Session UDP |
-| Site | Windows 控制台、单 Wintun、内嵌 wireguard-go、Session UDP、gVisor netstack 与主机套接字 |
+| Site | Windows Wails GUI、单 Wintun、内嵌 wireguard-go、Session UDP、gVisor netstack 与主机套接字 |
 
 - 所有 Windows WireGuard peer 只连接 Server，所有 Overlay 流量经中心转发。
 - 每个 Windows 节点只创建并复用一个名为 `RemLink` 的 Wintun，默认 MTU 1280。
@@ -41,7 +41,7 @@ Server 公网地址、管理令牌、HTTP 监听和数据目录从 YAML 读取�
 
 首次登记使用 Join Token，成功后使用各节点的 Node Token。NodeID、WireGuard 密钥和身份由程序管理。Join Token 可轮换，轮换不撤销已登记节点。
 
-Windows 身份以机器级 DPAPI 保护，存放在各角色 EXE 所在目录的 `identity.json`。首次注册 Join Token 可配置在 YAML；优先级为命令行 `-join-token`、环境变量 `REMLINK_JOIN_TOKEN`、YAML。Windows 私钥不上传 Server。
+Windows 身份以机器级 DPAPI 保护，分别存放在 `%ProgramData%\RemLink\Engineer\identity.json` 和 `%ProgramData%\RemLink\Site\identity.json`。本机目录只向 Administrators 与 SYSTEM 授权。两端通过应用内设置编辑服务器地址、名称和 Join Token，设置写入本机 `settings.json`，Join Token 也由 DPAPI 加密；无需包内 YAML。新电脑在配置完成前不启动网络运行时，保存后连接，下次启动自动读取已有设置。修改设置先停止旧运行时再启动新的运行时，过期回调不更新新状态。同一身份同时只允许一个新版进程使用。旧版 YAML 和可在本机解密的包内身份可自动导入，原文件保留供回退；其他电脑的包内旧身份不导入。Windows 私钥不上传 Server。关闭窗口可取消、隐藏到系统托盘或退出；隐藏后保持运行，托盘可恢复窗口或退出。
 
 Server 私钥存入数据目录，peer 只能使用自己的 Overlay 源地址。管理 API 使用可选的单一 Bearer Admin Token。Server 不内置 TLS，公网 HTTP 入口的保护由部署层 HTTPS 反向代理提供。
 
@@ -137,14 +137,16 @@ HTTP 请求、响应与鉴权实现见 `internal/bootstrap/http.go`、`internal/
 
 Server SQLite 包含 `settings`、`nodes`、`sessions`、`session_cidrs`、`session_stats`、`event_logs`。表结构和约束由 `internal/database/migrations` 管理。Docker 将数据库、密钥和应用日志放在 `/app/data`。
 
+Session 的参与节点 ID 作为历史身份保留，撤销节点不得级联删除会话、CIDR 或统计。数据库在创建会话、变更参与节点时验证节点仍已登记；历史记录的存续不依赖节点登记的存续。CIDR 与统计仍通过外键关联 Session。
+
 Engineer 记录自己创建的路由并在启动时清理陈旧路由；Site 重建进程内网关，不操作第三方 NAT。Wintun 适配器可复用。Server 重启关闭数据库中遗留的非终态会话，不透明恢复旧会话。新 Bootstrap 会清理已经丢失本地运行时的旧会话；短暂 Control 重连由节点运行时处理。
 
 日志模块为 CORE、BOOTSTRAP、WG、IPAM、CONTROL、SESSION、ROUTE、NETSTACK、TUN、SUBNET、SYSTEM。高频 packet 日志默认关闭，不记录载荷，只允许限速元数据事件。统计按 Engineer 视角定义上传/下载，周期上报累计计数；Server 不为统计进入 WireGuard 数据路径。
 
 ## 构建与验收
 
-Go/npm 依赖由模块和锁文件固定，Wintun DLL 内嵌并在释放时校验摘要。Engineer 与 Site 使用独立便携目录；Engineer 还保存按 Site 区分的 `site-profiles.json`。第三方声明随发布包提供。
+Go/npm 依赖由模块和锁文件固定，Wintun DLL 内嵌并在 EXE 旁释放和校验摘要。Engineer 与 Site 使用独立软件包，本机数据按角色独立保存在 ProgramData；发布包不包含机器身份、日志或现场网段。第三方声明随发布包提供。
 
-Docker 运行使用 `NET_ADMIN`、TUN 和 IPv4 转发，启动预检必须失败时明确退出。三个角色的 ZIP 独立，Docker 构建上下文 TAR 与可导入镜像 TAR 为不同发布形式。
+Docker 运行使用 `NET_ADMIN`、TUN 和 IPv4 转发，启动预检必须失败时明确退出。Engineer、Site 为独立 ZIP，Server 默认为可直接导入 Docker 的完整镜像 `.tar.gz`，包含 `manifest.json`、配置和全部镜像层；随附 Compose 和示例配置，用户配置及持久数据通过挂载提供。Linux 二进制与 shell 脚本保留可执行权限。镜像打包复用已有 RemLink Docker 镜像的系统运行层，丢弃旧应用层并验证摘要，再写入本次编译的程序。
 
 自动化验证覆盖见 [验证说明](../docs/validation/automated-coverage.md)。Gate A–D 与 T01–T18 在真实拓扑中采证，结果以当次运行记录为准。

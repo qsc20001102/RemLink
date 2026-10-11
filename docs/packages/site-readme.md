@@ -1,26 +1,21 @@
-# RemLink Site 独立便携包
+# RemLink Site 1.1.0
 
-本目录只属于 Site，不包含 Engineer 或 Server 程序。请把整个目录放在可持续写入的位置，例如 `C:\RemLink\Site`；不要只复制 EXE，也不要与 Engineer 解压到同一目录。
+解压后双击 `RemLinkSite.exe`，Windows 会请求管理员权限。Site 使用与 Engineer 一致的桌面界面，只有“连接”和“设置”两个页面。
 
 ## 首次使用
 
-1. 以管理员身份打开 PowerShell，进入本目录。
-2. 编辑 `site.yaml`，填写 Server URL、Site 名称、`join_token` 和 netstack 容量。
-3. 直接执行：
+新电脑打开后进入“设置”，填写 Server 公网地址、Site 名称和 Join Token，点击“保存并连接”。首次配置前不会联系服务器。已配置的电脑下次打开会自动使用本机数据连接，不需要准备或编辑 YAML。
 
-~~~powershell
-.\RemLinkSite.exe
-~~~
+“连接”页展示服务器、本机地址、控制通道、现场网络是否就绪、当前工程师连接和运行日志。顶部状态始终固定显示。“设置”以 Site 名称为第一项，服务器地址和 Join Token 始终遮挡，没有显示按钮，仍可修改；保存后先关闭旧连接再重新连接。首次注册、切换 Server 或同步设备名称需要有效 Join Token。
 
-`join_token` 会以明文保存在 YAML 中，用于首次注册、切换 Server 和同步改名；注册后的 Node Token 和 WireGuard 私钥仍由 DPAPI 保护。确认 Overlay、Control 和 RemoteSubnet 均就绪后停止前台程序。后续直接运行 `RemLinkSite.exe`，或按完整指南注册最高权限启动任务；默认配置路径始终是 EXE 旁的 `site.yaml`。
+Site 本机必须能够访问目标现场网络。远程网段由 Engineer 在连接时下发，Site 不填写远程网段。启动后等待服务器、控制通道和现场网络就绪，工程师即可接入。
 
-修改 YAML 后停止 Site 并重新启动，程序会自动同步 `identity.json`，无需删除文件。修改 `node_name` 会立即更新本地身份；填写当前 Server 的有效 `join_token` 后，也会同步服务器显示名称。切换 `server` 时填写新 Server 的有效 `join_token`，注册成功后自动更新身份；失败时保留原身份。节点 ID、WireGuard 密钥及路由清理记录会保留。`netstack` 参数在重启时直接从 YAML 读取。
+关闭窗口时可以隐藏到托盘并保持后台运行，也可以直接退出。托盘图标可恢复窗口，右键可退出程序。设置开机启动时，使用 Windows 计划任务并授予最高权限，不要与另一份 Site 同时运行。
 
-## 本目录中的运行文件
+## 本机数据与升级
 
-- `RemLinkSite.svg`、`RemLinkSite.ico`：Site 专属图标；ICO 已嵌入 EXE，也可用于快捷方式。
-- `identity.json`：NodeID、Node Token 和 WireGuard 私钥等 DPAPI 保护身份，仅可在生成它的 Windows 主机解密。
-- `logs\site.jsonl`：Site 日志。
-- `wintun.dll`：EXE 内嵌的固定版本 Wintun 首次运行释放文件，程序会校验 SHA-256。
+身份、`settings.json` 和日志位于 `%ProgramData%\RemLink\Site`。Join Token、Node Token 和 WireGuard 私钥使用 Windows 本机加密。更换软件包目录不会改变本机身份和连接设置。
 
-备份或升级前先停止前台进程和计划任务。升级时保留 `site.yaml`、`identity.json` 和 `logs`，只替换通过校验的新 EXE；完整三端流程见 `docs\deployment-and-usage.md`。
+升级前先停止旧进程或旧计划任务。新版会导入已有本机身份及旧本机 YAML；若身份仍在旧包中，在原目录运行一次新版以导入身份和配置。原文件保留供回退；导入后以应用内设置为准。旧版 netstack 容量与超时会随配置导入；新电脑使用默认容量。
+
+转发软件包时不要附带本机数据目录。另一台电脑首次打开需要配置并创建自己的节点。备份前停止程序，再备份本机目录。完整说明见 `docs/deployment-and-usage.md`。

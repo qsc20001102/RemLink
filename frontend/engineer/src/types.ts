@@ -11,6 +11,10 @@ export interface SiteSummary {
 }
 
 export interface EngineerState {
+	configured: boolean
+	connecting: boolean
+	nodeName: string
+	connectionError: string
   serverConnected: boolean
   controlConnected: boolean
   serverURL: string

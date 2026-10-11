@@ -13,16 +13,26 @@ $temporaryRoot = $null
 $packageRoot = $resolvedPackage
 try {
     if (Test-Path -LiteralPath $resolvedPackage -PathType Leaf) {
-        if ([System.IO.Path]::GetExtension($resolvedPackage) -ne ".zip") {
-            throw "Release package file must be a ZIP: $resolvedPackage"
-        }
+        $isTarGzip = $resolvedPackage.EndsWith('.tar.gz', [StringComparison]::OrdinalIgnoreCase)
+        if (-not $isTarGzip -and [System.IO.Path]::GetExtension($resolvedPackage) -ne ".zip") { throw "Release package must be ZIP or tar.gz: $resolvedPackage" }
         $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("remlink-release-verify-" + [guid]::NewGuid().ToString("N"))
         New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
-        Expand-Archive -LiteralPath $resolvedPackage -DestinationPath $temporaryRoot
+        if ($isTarGzip) {
+            $archiveEntries = @(& tar -tzf $resolvedPackage)
+            if ($LASTEXITCODE -ne 0 -or $archiveEntries.Count -eq 0) { throw "Cannot inspect Server tar.gz archive" }
+            foreach ($entry in $archiveEntries) {
+                $normalized = $entry.Replace('\', '/')
+                if ([IO.Path]::IsPathRooted($normalized) -or $normalized -match '(^|/)\.\.(/|$)' -or $normalized -match '^[A-Za-z]:') { throw "Unsafe archive path: $entry" }
+            }
+            $archiveDetails = @(& tar -tvzf $resolvedPackage)
+            if ($LASTEXITCODE -ne 0 -or @($archiveDetails | Where-Object { $_ -match '^[lh]' }).Count -ne 0) { throw "Server archive must not contain symbolic or hard links" }
+            & tar -xzf $resolvedPackage -C $temporaryRoot
+            if ($LASTEXITCODE -ne 0) { throw "Cannot extract Server tar.gz archive" }
+        } else { Expand-Archive -LiteralPath $resolvedPackage -DestinationPath $temporaryRoot }
         $roots = @(Get-ChildItem -LiteralPath $temporaryRoot -Directory)
         $looseFiles = @(Get-ChildItem -LiteralPath $temporaryRoot -File)
         if ($roots.Count -ne 1 -or $looseFiles.Count -ne 0) {
-            throw "Release ZIP must contain exactly one top-level package directory"
+            throw "Release archive must contain exactly one top-level package directory"
         }
         $packageRoot = $roots[0].FullName
     } elseif (-not (Test-Path -LiteralPath $resolvedPackage -PathType Container)) {
@@ -62,10 +72,10 @@ try {
     )
     switch ($Role) {
         Engineer {
-            $required += @("RemLinkEngineer.exe", "RemLinkEngineer.svg", "RemLinkEngineer.ico", "engineer.yaml", "THIRD_PARTY_NOTICES.md")
+            $required += @("RemLinkEngineer.exe", "RemLinkEngineer.svg", "RemLinkEngineer.ico", "THIRD_PARTY_NOTICES.md")
         }
         Site {
-            $required += @("RemLinkSite.exe", "RemLinkSite.svg", "RemLinkSite.ico", "site.yaml", "THIRD_PARTY_NOTICES.md")
+            $required += @("RemLinkSite.exe", "RemLinkSite.svg", "RemLinkSite.ico", "THIRD_PARTY_NOTICES.md")
         }
         Server {
             $required += @(
@@ -92,13 +102,7 @@ try {
     }
     if ($Role -in @("Engineer", "Site")) {
         $clientConfigName = if ($Role -eq "Engineer") { "engineer.yaml" } else { "site.yaml" }
-        $clientConfig = Get-Content -Raw -LiteralPath (Join-Path $packageRoot $clientConfigName)
-        if ($clientConfig -notmatch '(?m)^join_token:\s*') {
-            throw "$Role package YAML does not expose the join_token convenience field"
-        }
-        if ($clientConfig -match '(?im)^\s*(node_token|wg_private_key)\s*:') {
-            throw "$Role package YAML contains a durable Node secret field"
-        }
+        if (Test-Path -LiteralPath (Join-Path $packageRoot $clientConfigName)) { throw "$Role desktop package must configure connections in the application, not package YAML" }
     }
 
     $checksumPath = Join-Path $packageRoot "SHA256SUMS.txt"
@@ -136,11 +140,19 @@ try {
     if (-not $buildInfo.version -or $buildInfo.role -ne $Role -or @($buildInfo.target).Count -ne 1) {
         throw "BUILD-INFO.json does not describe one $Role target"
     }
-    if ($Role -in @("Engineer", "Site") -and $buildInfo.portable_data_root -ne "executable_directory") {
-        throw "$Role BUILD-INFO.json does not declare its portable executable data root"
+    if ($Role -in @("Engineer", "Site") -and ($buildInfo.state_data_root -ne "windows_program_data" -or $buildInfo.wintun_runtime_root -ne "executable_directory")) {
+        throw "$Role BUILD-INFO.json does not declare machine-local state and package-local Wintun"
     }
-    if ($Role -eq "Engineer" -and (@($buildInfo.wails_build_tags) -join ',') -ne 'desktop,production') {
-        throw "Engineer BUILD-INFO.json does not declare the mandatory Wails desktop,production tags"
+    if ($Role -in @("Engineer", "Site")) {
+        $runtimeFiles = @(Get-ChildItem -LiteralPath $packageRoot -Recurse -File -Force | Where-Object {
+            $_.Name -in @("identity.json", "site-profiles.json", "settings.json") -or $_.Extension -eq ".jsonl"
+        })
+        if ($runtimeFiles.Count -ne 0) {
+            throw "$Role release package contains machine runtime data: $($runtimeFiles[0].FullName)"
+        }
+    }
+    if ($Role -in @("Engineer", "Site") -and (@($buildInfo.wails_build_tags) -join ',') -ne 'desktop,production') {
+        throw "$Role BUILD-INFO.json does not declare the mandatory Wails desktop,production tags"
     }
 
     if ($Role -eq "Server") {

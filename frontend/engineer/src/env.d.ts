@@ -1,12 +1,16 @@
 /// <reference types="vite/client" />
 
 import type { EngineerState } from './types'
+import type { NativeDesktop } from '../../shared/types'
+import type { SiteState } from '../../site/src/types'
 
 declare global {
   interface Window {
     go?: {
       main?: {
-        EngineerApp?: {
+        SiteApp?: NativeDesktop & { GetState(): Promise<SiteState> }
+        EngineerApp?: NativeDesktop & {
+          OpenConfigDirectory(): Promise<void>
           GetState(): Promise<EngineerState>
           CreateSession(siteNodeID: string, cidrs: string[]): Promise<string>
           SaveSiteCIDRs(siteNodeID: string, cidrs: string[]): Promise<void>

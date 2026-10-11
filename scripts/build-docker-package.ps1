@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "1.0.8",
+    [string]$Version = "1.1.0",
     [string]$OutputDirectory = "dist"
 )
 
@@ -61,7 +61,7 @@ try {
         Write-Utf8LF (Join-Path $packageRoot $mapping[1]) ([IO.File]::ReadAllText((Join-Path $repository ("deploy/docker/" + $mapping[0]))))
     }
     $compose = [IO.File]::ReadAllText((Join-Path $repository "deploy/docker/compose.image.yaml"))
-    Write-Utf8LF (Join-Path $packageRoot "compose.yaml") ($compose.Replace("remlink/server:1.0.8", $image))
+    Write-Utf8LF (Join-Path $packageRoot "compose.yaml") ($compose.Replace("remlink/server:1.1.0", $image))
     Write-Utf8LF (Join-Path $packageRoot "image.txt") "$image`n"
     Write-Utf8LF (Join-Path $packageRoot ".dockerignore") "*`n!Dockerfile`n!linux-amd64/`n!linux-amd64/remlink-server`n!linux-amd64/THIRD_PARTY_NOTICES.md`n!docker/`n!docker/preflight.sh`n"
     $checksumLines = Get-ChildItem -LiteralPath $packageRoot -Recurse -File -Force | Sort-Object FullName | ForEach-Object {

@@ -1,9 +1,10 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "1.0.8",
+    [string]$Version = "1.1.0",
     [string]$OutputDirectory = "dist",
     [ValidateSet("Engineer", "Site", "Server")]
     [string[]]$Roles = @("Engineer", "Site", "Server"),
+    [string]$RuntimeImagePath = $env:REMLINK_RUNTIME_IMAGE,
     [switch]$SkipArchive
 )
 
@@ -13,6 +14,16 @@ if ($Version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
 }
 
 $repository = Split-Path -Parent $PSScriptRoot
+if ("Server" -in $Roles -and -not $SkipArchive) {
+    if (-not $RuntimeImagePath) { $RuntimeImagePath = Join-Path $repository "dist/runtime/remlink-server-runtime-amd64.tar.gz" }
+    $RuntimeImagePath = [IO.Path]::GetFullPath($RuntimeImagePath)
+    if (-not (Test-Path -LiteralPath $RuntimeImagePath -PathType Leaf)) {
+        throw "Server image packaging requires an existing RemLink Docker image archive. Set REMLINK_RUNTIME_IMAGE or -RuntimeImagePath, or place it at dist/runtime/remlink-server-runtime-amd64.tar.gz. See deploy/docker/README.ugreen.md."
+    }
+    if (-not (Get-Command python -ErrorAction SilentlyContinue)) { throw "Server image packaging requires Python 3.11 or newer" }
+    & python -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)"
+    if ($LASTEXITCODE -ne 0) { throw "Server image packaging requires Python 3.11 or newer" }
+}
 $releaseRoot = Join-Path $repository $OutputDirectory
 $engineerName = "RemLink-Engineer-v$Version-windows-amd64"
 $siteName = "RemLink-Site-v$Version-windows-amd64"
@@ -49,8 +60,9 @@ function Write-PackageMetadata {
         go = (go version)
         node = (node --version)
         target = @($Target)
-        portable_data_root = if ($Role -in @("Engineer", "Site")) { "executable_directory" } else { $null }
-        wails_build_tags = if ($Role -eq "Engineer") { @("desktop", "production") } else { $null }
+        state_data_root = if ($Role -in @("Engineer", "Site")) { "windows_program_data" } else { $null }
+        wintun_runtime_root = if ($Role -in @("Engineer", "Site")) { "executable_directory" } else { $null }
+        wails_build_tags = if ($Role -in @("Engineer", "Site")) { @("desktop", "production") } else { $null }
     } | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 (Join-Path $Root "BUILD-INFO.json")
 
     $checksumLines = Get-ChildItem -LiteralPath $Root -Recurse -File | Sort-Object FullName | ForEach-Object {
@@ -70,6 +82,16 @@ function New-PackageArchive {
     if ($SkipArchive) {
         & (Join-Path $repository "scripts/validation/Test-ReleasePackage.ps1") -PackagePath $Root -Role $Role
         return $Root
+    }
+    if ($Role -eq "Server") {
+        & (Join-Path $repository "scripts/validation/Test-ReleasePackage.ps1") -PackagePath $Root -Role Server
+        $archivePath = Join-Path $releaseRoot "remlink-server-$Version-amd64.tar.gz"
+        & python (Join-Path $repository "scripts/export-nas-image.py") --runtime-image $RuntimeImagePath --context $Root --output $archivePath | Out-Host
+        Assert-NativeSuccess "Server Docker image archive and layer verification"
+        Copy-Item (Join-Path $Root "docker/compose.image.yaml") (Join-Path $releaseRoot "compose.yaml")
+        Copy-Item (Join-Path $Root "docker/server.yaml") (Join-Path $releaseRoot "server.example.yaml")
+        Copy-Item (Join-Path $Root "docker/README.ugreen.md") (Join-Path $releaseRoot "README-Server.md")
+        return $archivePath
     }
     $archivePath = Join-Path $releaseRoot "$Name.zip"
     if (Test-Path -LiteralPath $archivePath) {
@@ -130,6 +152,10 @@ try {
     Assert-NativeSuccess "go test"
     go vet ./...
     Assert-NativeSuccess "go vet"
+    if ("Server" -in $Roles -and -not $SkipArchive) {
+        python -m unittest discover -s scripts -p "test_export_nas_image.py"
+        Assert-NativeSuccess "Server Docker image exporter regression tests"
+    }
     & (Join-Path $repository "scripts/validation/Test-Architecture.ps1")
     & (Join-Path $repository "scripts/validation/Test-AcceptanceTools.ps1")
 
@@ -146,12 +172,12 @@ try {
         if ("Engineer" -in $Roles) {
             go build -trimpath -tags "desktop,production" -ldflags "$linkerFlags -H windowsgui" -o (Join-Path $engineerRoot "RemLinkEngineer.exe") ./cmd/engineer
             Assert-NativeSuccess "Engineer build"
-            & (Join-Path $repository "scripts/branding/Set-ExecutableIcon.ps1") -ExecutablePath (Join-Path $engineerRoot "RemLinkEngineer.exe") -IconPath (Join-Path $repository "frontend/branding/engineer.ico")
+            & (Join-Path $repository "scripts/branding/Set-ExecutableIcon.ps1") -ExecutablePath (Join-Path $engineerRoot "RemLinkEngineer.exe") -IconPath (Join-Path $repository "frontend/branding/engineer.ico") -Version $Version
         }
         if ("Site" -in $Roles) {
-            go build -trimpath -ldflags $linkerFlags -o (Join-Path $siteRoot "RemLinkSite.exe") ./cmd/site
+            go build -trimpath -tags "desktop,production" -ldflags "$linkerFlags -H windowsgui" -o (Join-Path $siteRoot "RemLinkSite.exe") ./cmd/site
             Assert-NativeSuccess "Site build"
-            & (Join-Path $repository "scripts/branding/Set-ExecutableIcon.ps1") -ExecutablePath (Join-Path $siteRoot "RemLinkSite.exe") -IconPath (Join-Path $repository "frontend/branding/site.ico")
+            & (Join-Path $repository "scripts/branding/Set-ExecutableIcon.ps1") -ExecutablePath (Join-Path $siteRoot "RemLinkSite.exe") -IconPath (Join-Path $repository "frontend/branding/site.ico") -Version $Version
         }
 
         $env:GOOS = "linux"
@@ -172,7 +198,6 @@ try {
         if ($role -notin $Roles) { continue }
         $clientRoot = if ($role -eq "Engineer") { $engineerRoot } else { $siteRoot }
         $clientRole = $role.ToLowerInvariant()
-        Copy-Item "config/$clientRole.example.yaml" (Join-Path $clientRoot "$clientRole.yaml")
         Copy-Item "frontend/branding/$clientRole.svg" (Join-Path $clientRoot "RemLink$role.svg")
         Copy-Item "frontend/branding/$clientRole.ico" (Join-Path $clientRoot "RemLink$role.ico")
         Copy-Item THIRD_PARTY_NOTICES.md $clientRoot
@@ -197,6 +222,7 @@ try {
         Copy-Item docs/deployment-and-usage.md (Join-Path $serverRoot "docs/deployment-and-usage.md")
         Copy-Item scripts/validation/* $validationScriptsRoot
         Copy-Item docs/validation/* $validationDocsRoot
+        [IO.File]::WriteAllText((Join-Path $serverRoot "image.txt"), "remlink/server:$Version`n", [Text.UTF8Encoding]::new($false))
         Write-PackageMetadata -Root $serverRoot -Role Server -Target "linux/amd64"
     }
 

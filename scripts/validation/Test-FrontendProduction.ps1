@@ -23,6 +23,12 @@ $checks = @(
         forbidden = @("4488624737516445881", "site-qingdao", "dev-request", "青岛现场 01")
     },
     [ordered]@{
+        name = "Site"
+        root = Join-Path $repository "frontend/site/dist"
+        required = @("GetState", "SaveSettings", "production Demo fallback is disabled")
+        forbidden = @("remlink-site-demo-settings", "10.88.0.25")
+    },
+    [ordered]@{
         name = "Server"
         root = Join-Path $repository "frontend/server/dist"
         required = @("/api/v1/admin/nodes", "/api/v1/admin/sessions", "/api/v1/admin/network", "/api/v1/admin/logs")

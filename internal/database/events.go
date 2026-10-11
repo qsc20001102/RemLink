@@ -32,6 +32,34 @@ func (s *Store) AppendEvent(ctx context.Context, event model.EventLog) error {
 	if !json.Valid(fields) {
 		return errors.New("event fields must be valid JSON")
 	}
+	// Keep names as event-time snapshots so deleting or renaming a device does
+	// not make earlier human-readable events anonymous or misleading.
+	var namedFields map[string]any
+	if json.Unmarshal(fields, &namedFields) == nil {
+		if namedFields == nil {
+			namedFields = make(map[string]any)
+		}
+		addName := func(id, key string) {
+			if id == "" || namedFields[key] != nil {
+				return
+			}
+			if node, err := s.GetNode(ctx, id); err == nil {
+				namedFields[key] = node.Name
+			}
+		}
+		addName(event.NodeID, "node_name")
+		if event.SessionID != 0 && namedFields["engineer_node_id"] == nil {
+			var engineer, site string
+			if err := s.db.QueryRowContext(ctx, `SELECT engineer_node_id, site_node_id FROM sessions WHERE session_id = ?`, strconv.FormatUint(event.SessionID, 10)).Scan(&engineer, &site); err == nil {
+				namedFields["engineer_node_id"], namedFields["site_node_id"] = engineer, site
+			}
+		}
+		engineer, _ := namedFields["engineer_node_id"].(string)
+		site, _ := namedFields["site_node_id"].(string)
+		addName(engineer, "engineer_name")
+		addName(site, "site_name")
+		fields, _ = json.Marshal(namedFields)
+	}
 	var sessionID any
 	if event.SessionID != 0 {
 		sessionID = strconv.FormatUint(event.SessionID, 10)
@@ -58,8 +86,8 @@ func (s *Store) ListEvents(ctx context.Context, filter model.EventLogFilter) ([]
 		arguments = append(arguments, strings.ToUpper(filter.Module))
 	}
 	if filter.NodeID != "" {
-		query += ` AND node_id = ?`
-		arguments = append(arguments, filter.NodeID)
+		query += ` AND (node_id = ? OR json_extract(fields_json, '$.engineer_node_id') = ? OR json_extract(fields_json, '$.site_node_id') = ?)`
+		arguments = append(arguments, filter.NodeID, filter.NodeID, filter.NodeID)
 	}
 	if filter.SessionID != 0 {
 		query += ` AND session_id = ?`
